@@ -47,4 +47,6 @@ Browser checks use the bundled release with external requests blocked, and cover
 
 The public scenario editor now includes **Draw event on map**: confirm a smoothed hurricane/wind path, or paint and erase an irregular rain/lightning/treatment footprint. The basic branch includes rotating CMA-colour cyclone markers and looping wind arrows. See [drawing change notes](docs/changes/2026-11-10-counterfactual-drawing.md) and [Cloudflare setup](docs/cloudflare.md).
 
-This branch adds the experimental [six-keyframe area motion](docs/changes/2026-11-10-counterfactual-motion.md). Select `main` for the basic drawing editor, or `feat/counterfactual-motion` for this motion preview in Cloudflare.
+Weather-symbol, wind-vector and preset visual refinements are documented in [weather visual changes](docs/changes/2026-11-10-weather-visuals.md). Use `dev` for the advanced motion preview, with build `npm run build` and non-production deploy `npx wrangler preview`; production stays on `main`.
+
+This `dev` branch includes the experimental [six-keyframe area motion](docs/changes/2026-11-10-counterfactual-motion.md). Lightning and rain symbols move and fade with their area. Select `main` for the basic editor and `dev` for the short-name Cloudflare motion preview.

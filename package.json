@@ -6,7 +6,8 @@
   "scripts": {
     "build": "node scripts/build-cloudflare.mjs",
     "test": "node --test tests/*.test.cjs",
-    "deploy": "npx wrangler deploy"
+    "deploy": "npx wrangler deploy",
+    "preview": "npm run build && npx wrangler preview"
   },
   "engines": {
     "node": ">=20"
