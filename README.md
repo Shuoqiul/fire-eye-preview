@@ -46,3 +46,5 @@ node fire-eye-preview/tests/counterfactual-browser.mjs
 Browser checks use the bundled release with external requests blocked, and cover five events, shared parameter modes, repeated runs, edits, missing data, release changes, cleanup and mobile layout. Downwind field transfer and automatic landfall detection remain future integration work; Expert mode accepts a declared hurricane landfall hour.
 
 The public scenario editor now includes **Draw event on map**: confirm a smoothed hurricane/wind path, or paint and erase an irregular rain/lightning/treatment footprint. The basic branch includes rotating CMA-colour cyclone markers and looping wind arrows. See [drawing change notes](docs/changes/2026-11-10-counterfactual-drawing.md) and [Cloudflare setup](docs/cloudflare.md).
+
+This branch adds the experimental [six-keyframe area motion](docs/changes/2026-11-10-counterfactual-motion.md). Select `main` for the basic drawing editor, or `feat/counterfactual-motion` for this motion preview in Cloudflare.
