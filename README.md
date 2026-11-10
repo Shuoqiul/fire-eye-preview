@@ -49,4 +49,6 @@ The public scenario editor now includes **Draw event on map**: confirm a smoothe
 
 Weather-symbol, wind-vector and preset visual refinements are documented in [weather visual changes](docs/changes/2026-11-10-weather-visuals.md). Use `dev` for the advanced motion preview, with build `npm run build` and non-production deploy `npx wrangler preview`; production stays on `main`.
 
-This `dev` branch includes the experimental [six-keyframe area motion](docs/changes/2026-11-10-counterfactual-motion.md). Lightning and rain symbols move and fade with their area. Select `main` for the basic editor and `dev` for the short-name Cloudflare motion preview.
+The public editor uses complete event recipes and now/24-hour timing. Expert mode retains timing and numerical edits. High-wind width adjusts across the drawn path, while arrow density adapts to wind speed. See [public recipes and Preview fix](docs/changes/2026-11-10-public-presets-and-preview.md).
+
+This `dev` branch retains the experimental [six-keyframe area motion](docs/changes/2026-11-10-counterfactual-motion.md), including moving lightning/rain glyphs and direction/speed controls.

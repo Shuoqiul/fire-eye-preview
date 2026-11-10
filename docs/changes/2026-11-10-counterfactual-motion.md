@@ -2,7 +2,7 @@
 
 Branch: `dev`, continuing the advanced-motion implementation on the drawing editor.
 
-Rain, thunderstorms and treatment areas start at offset zero. Their public and expert start/duration fields are replaced by direction (degrees) and speed (0–100 px/s) sliders, including wheel adjustment. Initial bearing is sampled once per new event; initial speed is 12 px/s. Motion metadata round-trips with event JSON.
+Rain, thunderstorms and treatment areas use public start 0 / duration 24 hours, with direction (degrees) and speed (0–100 px/s) sliders including wheel adjustment. Expert mode retains editable start and duration fields. Initial bearing is sampled once per new event; initial speed is 12 px/s. Motion metadata round-trips with event JSON.
 
 The visual loop contains six keys at 0, 0.5, 1, 1.5, 2 and 2.5 seconds. Position uses smooth interpolation, and two raster layers crossfade progressively evaporating textures. Each half-second displacement is capped at 50 screen pixels at the current map scale. The final transparent frame is held for 0.5 seconds; the three-second cycle then resets. Standard lightning and rain symbols follow their area. Reduced-motion mode shows the initial static frame.
 

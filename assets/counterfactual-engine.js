@@ -214,7 +214,7 @@
     if(event.area && ['heavy_rain','thunderstorm','prescribed_burn'].includes(event.type)) {
       const motion=event.motion||{direction:Math.floor(Math.random()*360),speed:12};
       if(!Number.isFinite(motion.direction)||!Number.isFinite(motion.speed)||motion.speed<0||motion.speed>100)throw Error('Motion needs direction and speed within 0–100 px/s.');
-      n.motion={direction:((motion.direction%360)+360)%360,speed:motion.speed};n.startH=0;
+      n.motion={direction:((motion.direction%360)+360)%360,speed:motion.speed};
     }
     if(event.area)n.area=normalizeArea(event.area);
     if(event.windPath){if(!Array.isArray(event.windPath)||event.windPath.length<2||event.windPath.length>128||event.windPath.some(p=>!validPoint(p)))throw Error('Wind path needs valid points.');n.windPath=event.windPath.map(p=>[...p]);}
