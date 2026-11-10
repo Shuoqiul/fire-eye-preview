@@ -1,0 +1,7 @@
+/dist/
+/node_modules/
+/.wrangler/
+/.dev.vars
+
+# Four 25 MiB+ forecast archives are served from immutable release URLs.
+/dist/releases/

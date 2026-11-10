@@ -1,0 +1,14 @@
+{
+  "name": "fire-eye-preview",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Fire Eye forecast and counterfactual predictor preview",
+  "scripts": {
+    "build": "node scripts/build-cloudflare.mjs",
+    "test": "node --test tests/*.test.cjs",
+    "deploy": "npx wrangler deploy"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

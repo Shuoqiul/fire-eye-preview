@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "releases": {
+    "20261102T000000Z-78748c4bf5ef5b50": {
+      "asset_base": "https://huggingface.co/datasets/yx21e/fire-eye-forecasts-preview/resolve/e15d7d4ac83182cddfcbc11e01b6432efeefc2a2/releases/20261102T000000Z-78748c4bf5ef5b50/",
+      "files": {
+        "forecast-h12.pmtiles": {
+          "sha256": "f003f1362d41015e764f535071a9372696acfbccfce8dcc371839bcdaeb1ca85",
+          "bytes": 30664257
+        },
+        "forecast-h24.pmtiles": {
+          "sha256": "0a852b3998f395d361601f1b15a054522436cd55adc6d1ef966b5db3ecae602c",
+          "bytes": 31457931
+        },
+        "forecast-h36.pmtiles": {
+          "sha256": "6f30d38b52e6fcf92ce16ad1a58f0bc2eb244664017f586c21d92a664b5e9cfd",
+          "bytes": 32598155
+        },
+        "forecast-h48.pmtiles": {
+          "sha256": "4c9de0efd047b73d96bf34b9ae610f9f911a9637c0521d1254d2a278c9d8e957",
+          "bytes": 33347946
+        }
+      }
+    }
+  }
+}

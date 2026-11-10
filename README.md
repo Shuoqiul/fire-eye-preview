@@ -15,3 +15,34 @@ Restored features include published fire reports and perimeters, satellite detec
 The webpage is hosted on GitHub Pages and normally reads verified forecast releases from Hugging Face. It checks the publication index every five minutes while visible. If remote data cannot load, a bundled snapshot remains available; its original issue time is always displayed. The snapshot may be older than the latest release.
 
 Public dataset: https://huggingface.co/datasets/yx21e/fire-eye-forecasts-preview
+
+
+## Counterfactual predictor
+
+The map sidebar includes a separate **Counterfactual predictor** entry. It applies five event rules (hurricane, thunderstorm, high wind, heavy rain and prescribed burn) to the selected published forecast issue. Everyone presets and Expert numeric fields share scenario parameters. Baseline, scenario and change views use the same map and available forecast windows.
+
+The calculation is an exploratory rule response on published scores. Published occupancy is used as a receptivity proxy; physical driver data and calibrated response magnitudes remain future work. Results describe scenario scores and score changes. Method details and current verification are maintained in [PROJECT_STATUS.md](../PROJECT_STATUS.md).
+
+Serve this directory over HTTP to preview locally:
+
+```sh
+python3 -m http.server 5199 --bind 127.0.0.1 --directory fire-eye-preview
+```
+
+Run the calculation checks from the repository root:
+
+```sh
+node --test fire-eye-preview/tests/counterfactual-*.test.cjs
+```
+
+The native-grid checks read the bundled forecast binary grids, verify their SHA-256 hashes, and exercise identity, nodata preservation and localized event response. The application uses its existing verified grid loader for browser calculations.
+
+Browser regression (start the static server first; uses the existing Playwright dependency in `cf-app`):
+
+```sh
+node fire-eye-preview/tests/counterfactual-browser.mjs
+```
+
+Browser checks use the bundled release with external requests blocked, and cover five events, shared parameter modes, repeated runs, edits, missing data, release changes, cleanup and mobile layout. Downwind field transfer and automatic landfall detection remain future integration work; Expert mode accepts a declared hurricane landfall hour.
+
+The public scenario editor now includes **Draw event on map**: confirm a smoothed hurricane/wind path, or paint and erase an irregular rain/lightning/treatment footprint. The basic branch includes rotating CMA-colour cyclone markers and looping wind arrows. See [drawing change notes](docs/changes/2026-11-10-counterfactual-drawing.md) and [Cloudflare setup](docs/cloudflare.md).

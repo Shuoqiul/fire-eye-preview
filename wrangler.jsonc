@@ -1,0 +1,10 @@
+{
+  // Cloudflare Workers Static Assets serves the self-contained dist bundle.
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "fire-eye-preview",
+  "compatibility_date": "2026-11-10",
+  "assets": {
+    "directory": "./dist",
+    "not_found_handling": "404-page"
+  }
+}
