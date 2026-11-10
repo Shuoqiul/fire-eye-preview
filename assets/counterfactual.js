@@ -3,15 +3,9 @@
 (() => {
   const model=window.FireCounterfactual, $=id=>document.getElementById(id);
   const events={hurricane:'Hurricane',thunderstorm:'Thunderstorm',high_wind:'High wind',heavy_rain:'Heavy rain',prescribed_burn:'Prescribed burn'};
-  const presets={
-    high_wind:[['Breezy',{windMph:20}],['Windy',{windMph:27}],['Strong',{windMph:45}],['Damaging',{windMph:58}]],
-    heavy_rain:[['Shower',{rainIn:.1}],['Steady',{rainIn:.3}],['Heavy',{rainIn:.6}],['Downpour',{rainIn:1}]],
-    thunderstorm:[['Isolated, dry',{coverage:.2,dry:true,rainIn:0}],['Scattered, dry',{coverage:.4,dry:true,rainIn:0}],['Scattered, wet',{coverage:.4,dry:false,rainIn:.6}]],
-    hurricane:[['Tropical storm',{windMph:55,rainIn:3,vmax:48}],['Hurricane',{windMph:90,rainIn:6,vmax:78}],['Major hurricane',{windMph:125,rainIn:10,vmax:109}]],
-    prescribed_burn:[['Recent treatment',{treatedFraction:.6,ageYears:2}],['Older treatment',{treatedFraction:.6,ageYears:8}],['Light treatment',{treatedFraction:.2,ageYears:2}]]
-  };
+  const presets=FirePresets.groups;
   const state={open:false,event:null,result:null,view:'change',mode:'everyone',windowIndex:0,status:'idle'};
-  let panel,output,status,token=0,grid,features=[],geoKey='',saved,drag=null,drawing=null,suppressClick=false,brush=null,animation=0,icons=[],windArrows=[],areaImage=null,stormSymbols=[];
+  let panel,output,status,token=0,grid,features=[],geoKey='',saved,drag=null,drawing=null,suppressClick=false,brush=null,animation=0,icons=[],windArrows=[],areaImage=null,stormSymbols=[],coast=null,coastReady=null;
   const S=()=>window.fireEyePreview;
   const fc=features=>({type:'FeatureCollection',features});
   const feature=(geometry,kind,properties={})=>({type:'Feature',geometry,properties:{kind,...properties}});
@@ -23,11 +17,16 @@
   const button=(text,action,cls='cf-secondary')=>{const n=node('button',text,cls);n.type='button';n.onclick=action;return n;};
   function message(text,kind=''){state.status=text;if(status){status.textContent=text;status.dataset.kind=kind;}}
   function normalized(value){return model.normalize(value);}
+  async function loadCoast(){
+    coastReady||=fetch('assets/land.geojson').then(r=>{if(!r.ok)throw Error('Coastline unavailable');return r.json();}).then(data=>{coast=FirePresets.coastIndex(data);}).catch(()=>{coastReady=null;});
+    await coastReady;
+  }
   function defaults(type,center){
     const map=S()?.map,c=map?.getCenter(),view=center||(()=>{if(type==='hurricane'&&map){const r=map.getContainer().getBoundingClientRect();const q=map.unproject([innerWidth>640?(Math.min(700,r.width*.5)+r.width)/2:r.width/2,innerWidth>640?r.height/2:r.height*.78]);return[q.lng,q.lat];}return[c?.lng||-96,c?.lat||38];})(),e=model.defaults(type,view);
     if(type==='hurricane'&&window.FireDrawing){e.track=FireDrawing.coastalTrack(view,map?.getZoom()||4);e.center=e.track[0].slice(0,2);}
     if(['heavy_rain','thunderstorm','prescribed_burn'].includes(type))e.area=defaultArea(e);
-    return e;
+    if(type==='high_wind')e.windPath=[move(e.center,e.windFromDeg,150),move(e.center,(e.windFromDeg+180)%360,150)];
+    return FirePresets.apply(e,undefined,coast||undefined);
   }
   function defaultArea(e){const radius=e.radiusKm,nw=move(e.center,315,radius*1.8),se=move(e.center,135,radius*1.8),width=80,height=80,mask=[];for(let y=0;y<height;y++)for(let x=0;x<width;x++)mask.push(Math.hypot(x-39.5,y-39.5)<28?1:0);return {width,height,bounds:[nw[0],se[1],se[0],nw[1]],mask};}
 
@@ -36,7 +35,13 @@
     if($('cf-run'))$('cf-run').disabled=false;
     S()?.map?.getSource('cf-result')?.setData(fc([]));message(text);paint();
   }
-  function setEvent(value){state.event=normalized(value);invalidate();if(state.open){controls();geometry();}}
+  function publicEvent(value){
+    if(state.mode!=='everyone')return value;
+    const next={...value,startH:0,durationH:24};
+    if(next.type==='hurricane'&&next.track)next.track=FirePresets.weakenTrack(next.track,next.track[0][2],coast||undefined);
+    return next;
+  }
+  function setEvent(value){state.event=normalized(publicEvent(value));invalidate();if(state.open){controls();geometry();}}
   function change(patch){try{setEvent({...state.event,...patch});}catch(e){message(e.message,'error');controls();}}
   function build() {
     if(panel)return;
@@ -52,7 +57,7 @@
     const run=button('Run comparison',()=>execute().catch(e=>message(e.message,'error')),'cf-run');run.id='cf-run';body.append(run);
     status=node('p','','cf-status');status.id='cf-status';status.setAttribute('role','status');status.setAttribute('aria-live','polite');body.append(status);
     const method=node('details','','cf-section');method.append(node('summary','Method & parameters'));
-    method.append(node('p','Rule-based scenario estimate on published occupancy scores. Wind, rain, lightning and fuel rules use the published score as a receptivity proxy. Response magnitudes await calibration.','cf-hint'),node('p','Rain uses fast/slow moisture memory; lightning uses a delayed response; treatment fades with age. Hurricane wind radii follow Radii-CLIPER; landfall decay uses an explicit landfall time. The shaded track is a visual cue.','cf-hint'));
+    method.append(node('p','Rule-based scenario estimate on published occupancy scores. Wind, rain, lightning and fuel rules use the published score as a receptivity proxy. Response magnitudes await calibration.','cf-hint'),node('p','Rain uses fast/slow moisture memory; lightning uses a delayed response; treatment fades with age. Hurricane wind radii follow Radii-CLIPER. Public track winds weaken near land; wider shadows indicate stronger point winds. Expert mode accepts an optional landfall time.','cf-hint'));
     const transfer=node('div','','cf-transfer'),exp=button('Export event',()=>{const blob=new Blob([JSON.stringify({version:1,event:state.event},null,2)],{type:'application/json'}),url=URL.createObjectURL(blob),a=node('a');a.href=url;a.download='fire-eye-counterfactual.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);});
     const imp=node('input');imp.type='file';imp.accept='.json,application/json';imp.id='cf-import';imp.onchange=async()=>{try{const file=imp.files[0];if(!file)return;if(file.size>100000)throw Error('Use an event JSON smaller than 100 kB.');const data=JSON.parse(await file.text());setEvent(data.event||data);message('Event imported. Run to compare.');}catch(e){message(e.message,'error');}finally{imp.value='';}};
     const label=node('label','Import event JSON','cf-hint');label.append(imp);transfer.append(exp,label);method.append(transfer);body.append(method);panel.append(body);
@@ -61,28 +66,36 @@
   function numeric(box,label,key,min,max,step=1,factor=1) {
     const wrap=node('label','','cf-field');wrap.append(node('span',label));const input=node('input');input.type='number';input.min=min;input.max=max;input.step=step;input.value=state.event[key]*factor;input.id='cf-'+key;input.onchange=()=>{const value=Number(input.value)/factor,patch={[key]:value};if(key==='rainIn'&&state.event.type==='thunderstorm')patch.dry=value<.1;change(patch);};wrap.append(input);box.append(wrap);
   }
+  function windWidthControl(box,e){
+    const wrap=node('label','','cf-field cf-width-control'),input=node('input'),value=node('output',(e.radiusKm*2).toFixed(0)+' km');
+    input.type='range';input.min=20;input.max=2000;input.step=10;input.value=e.radiusKm*2;input.id='cf-radiusKm';
+    input.oninput=()=>{state.event=normalized({...state.event,radiusKm:Number(input.value)/2});value.textContent=input.value+' km';invalidate();geometry();};
+    input.onwheel=ev=>{ev.preventDefault();input.value=Math.max(20,Math.min(2000,Number(input.value)+(ev.deltaY<0?10:-10)));input.oninput();};
+    wrap.append(node('span','Corridor width · km'),input,value);box.append(wrap);
+  }
   function controls() {
     if(!state.open)return;const e=state.event,box=$('cf-fields');box.replaceChildren(node('h3','2 · Set conditions','cf-step-title'));
     document.querySelectorAll('.cf-mode').forEach(b=>{const on=b.dataset.mode===state.mode;b.classList.toggle('selected',on);b.setAttribute('aria-pressed',on);});
     document.querySelectorAll('.cf-event-btn').forEach(b=>{const on=b.dataset.event===e.type;b.classList.toggle('selected',on);b.setAttribute('aria-pressed',on);});
     box.append(node('p',`${e.center[1].toFixed(3)}°, ${e.center[0].toFixed(3)}°`,'cf-hint'));
     if(state.mode==='everyone') {
-      const group=node('div','','cf-presets');for(const [label,drivers] of presets[e.type]){const on=Object.entries(drivers).filter(([k])=>k!=='vmax').every(([k,v])=>e[k]===v);const b=button(label,()=>{const patch={...drivers};delete patch.vmax;if(drivers.vmax)patch.track=e.track.map((p,i)=>[p[0],p[1],Math.max(25,drivers.vmax-i*5)]);change(patch);},'cf-preset');b.setAttribute('aria-pressed',on);const detail=Object.entries(drivers).filter(([k])=>k!=='vmax').map(([k,v])=>k==='windMph'?v+' mph':k==='rainIn'?v+' in':k==='coverage'?Math.round(v*100)+'% coverage':k==='ageYears'?v+' years':k==='treatedFraction'?Math.round(v*100)+'% treated':v?'dry':'wet').join(' · ');b.append(node('small',detail));group.append(b);}box.append(group);
+      const group=node('div','','cf-presets');for(const [label,drivers] of presets[e.type]){const on=FirePresets.matches(e,[label,drivers]);const b=button(label,()=>{change(FirePresets.apply(e,[label,drivers],coast||undefined));},'cf-preset');b.setAttribute('aria-pressed',on);b.dataset.preset=label;const detail=Object.entries(drivers).filter(([k])=>k!=='vmax').map(([k,v])=>k==='windMph'?v+' mph':k==='rainIn'?v+' in':k==='coverage'?Math.round(v*100)+'% coverage':k==='ageYears'?v+' years':k==='treatedFraction'?Math.round(v*100)+'% treated':v?'dry':'wet').join(' · ');b.append(node('small',detail));group.append(b);}box.append(group);
     }
     const fields=node('div','','cf-expert-fields');
-    if(e.type==='high_wind'||e.type==='hurricane') numeric(fields,'Width / radius · km','radiusKm',10,1000,10);
-    numeric(fields,'Start · h from issue','startH',0,120);numeric(fields,'Duration · h','durationH',1,120);
+    if(state.mode==='everyone'&&e.type==='high_wind')windWidthControl(fields,e);
     if(state.mode==='expert') {
+      numeric(fields,'Start · h from issue','startH',0,120);numeric(fields,'Duration · h','durationH',1,120);
+      if(e.type==='high_wind')numeric(fields,'Corridor width · km','radiusKm',20,2000,10,2);
       if(['high_wind','hurricane'].includes(e.type)){numeric(fields,'Sustained wind · mph','windMph',0,250,.1);numeric(fields,'Wind from · °','windFromDeg',0,360,1);}
-      if(['heavy_rain','hurricane'].includes(e.type))numeric(fields,'Total rain · in','rainIn',0,50,.01);
+      if(['heavy_rain','thunderstorm','hurricane'].includes(e.type))numeric(fields,'Total rain · in','rainIn',0,50,.2);
       if(['thunderstorm','hurricane'].includes(e.type))numeric(fields,'Lightning coverage · %','coverage',0,100,1,100);
       if(e.type==='prescribed_burn'){numeric(fields,'Treated fraction · %','treatedFraction',0,100,1,100);numeric(fields,'Years since treatment','ageYears',0,100,.1);}
     }
-    if(e.type==='thunderstorm')numeric(fields,'Accompanying rain · in','rainIn',0,50,.2);box.append(fields);
-    if(e.type==='hurricane') {
+    box.append(fields);
+    if(e.type==='hurricane'&&state.mode==='expert') {
       const track=node('details','','cf-track-editor');track.open=state.mode==='expert';track.append(node('summary','Track · 12-hour positions · wind in kt'));
       const table=node('table'),header=node('tr');for(const name of ['Point','Lon','Lat','Vmax',''])header.append(node('th',name));table.append(header);
-      e.track.forEach((p,i)=>{const row=node('tr');row.append(node('th',String(i+1)));p.forEach((v,k)=>{const td=node('td'),inp=node('input');inp.type='number';inp.step=k===2?1:.01;inp.value=v;inp.setAttribute('aria-label',`Track point ${i+1} ${['longitude','latitude','wind'][k]}`);inp.onchange=()=>{const t=e.track.map(p=>[...p]);t[i][k]=Number(inp.value);change({track:t});};td.append(inp);row.append(td);});const td=node('td'),remove=button('×',()=>change({track:e.track.filter((_,j)=>j!==i)}),'cf-remove');remove.disabled=e.track.length<=2;remove.setAttribute('aria-label','Remove track point '+(i+1));td.append(remove);row.append(td);table.append(row);});track.append(table,button('Add track point',()=>{const a=e.track.at(-2),b=e.track.at(-1);change({track:[...e.track,[2*b[0]-a[0],2*b[1]-a[1],b[2]]]});}));
+      e.track.forEach((p,i)=>{const row=node('tr');row.append(node('th',String(i+1)));p.forEach((v,k)=>{const td=node('td'),inp=node('input');inp.type='number';inp.step=k===2?1:.01;inp.value=k===2?Number(v.toFixed(1)):v;inp.setAttribute('aria-label',`Track point ${i+1} ${['longitude','latitude','wind'][k]}`);inp.onchange=()=>{const t=e.track.map(p=>[...p]);t[i][k]=Number(inp.value);change({track:t});};td.append(inp);row.append(td);});const td=node('td'),remove=button('×',()=>change({track:e.track.filter((_,j)=>j!==i)}),'cf-remove');remove.disabled=e.track.length<=2;remove.setAttribute('aria-label','Remove track point '+(i+1));td.append(remove);row.append(td);table.append(row);});track.append(table,button('Add track point',()=>{const a=e.track.at(-2),b=e.track.at(-1);change({track:[...e.track,[2*b[0]-a[0],2*b[1]-a[1],b[2]]]});}));
       if(state.mode==='expert'){const land=node('label','','cf-field');land.append(node('span','Landfall · h from issue (optional)'));const inp=node('input');inp.type='number';inp.min=0;inp.max=120;inp.value=e.landfallHours??'';inp.onchange=()=>change({landfallHours:inp.value===''?undefined:Number(inp.value)});land.append(inp);track.append(land);}box.append(track);
     }
     if(e.type==='hurricane'){
@@ -92,9 +105,8 @@
   }
   const move=(p,b,d)=>{const lat=d/110.57*Math.cos(b*Math.PI/180),lon=d/(111.32*Math.cos(p[1]*Math.PI/180))*Math.sin(b*Math.PI/180);return[p[0]+lon,p[1]+lat];};
   function shadow(e) {
-    const winds=e.track.map(p=>p[2]),lo=Math.min(...winds),hi=Math.max(...winds),length=e.track.slice(1).reduce((s,p,i)=>s+model.distance(p.slice(0,2),e.track[i].slice(0,2)),0),max=Math.max(60,Math.min(220,length*.1));
     const points=[];for(let i=0;i<e.track.length-1;i++)for(let k=0;k<8;k++){const a=e.track[i],b=e.track[i+1],t=k/8;points.push(a.map((v,j)=>v+(b[j]-v)*t));}points.push(e.track.at(-1));
-    const radii=points.map(p=>max/3+(hi===lo?1:(p[2]-lo)/(hi-lo))*max*2/3),parts=points.map((p,i)=>[model.ring(p.slice(0,2),radii[i],24)]);
+    const radii=points.map(p=>FirePresets.shadowRadius(p[2])),parts=points.map((p,i)=>[model.ring(p.slice(0,2),radii[i],24)]);
     for(let i=1;i<points.length;i++){const a=points[i-1],b=points[i],bearing=Math.atan2((b[0]-a[0])*Math.cos(a[1]*Math.PI/180),b[1]-a[1])*180/Math.PI,ring=[move(a,bearing+90,radii[i-1]),move(b,bearing+90,radii[i]),move(b,bearing-90,radii[i]),move(a,bearing-90,radii[i-1])];ring.push(ring[0]);parts.push([ring]);}
     return {type:'MultiPolygon',coordinates:polygonClipping.union(...parts)};
   }
@@ -136,9 +148,9 @@
     if(!state.open)return;const map=S().map,e=state.event,f=[];updateIcons(e);windArrows=[];
     if(e.type==='hurricane')f.push(feature(shadow(e),'shadow'),line(e.track.map(p=>p.slice(0,2)),'track'));
     if(e.type==='high_wind'){
-      const guide=e.windPath||[move(e.center,e.windFromDeg,e.radiusKm),move(e.center,(e.windFromDeg+180)%360,e.radiusKm)];
-      const screen=guide.map(p=>{const q=map.project(p);return[q.x,q.y];}),width=Math.max(45,Math.min(180,Math.abs(map.project(move(e.center,90,e.radiusKm*.6)).x-map.project(e.center).x)*2));
-      windArrows=FireDrawing.windField(screen,width,30,e.windMph).map(a=>({from:map.unproject(a.from).toArray(),to:map.unproject(a.to).toArray(),phase:a.phase,contributors:a.contributors,vector:a.vector}));
+      const guide=e.windPath||[move(e.center,e.windFromDeg,150),move(e.center,(e.windFromDeg+180)%360,150)];
+      const screen=guide.map(p=>{const q=map.project(p);return[q.x,q.y];}),width=Math.max(2,Math.abs(map.project(move(e.center,90,e.radiusKm)).x-map.project(e.center).x)*2);
+      windArrows=FireDrawing.windField(screen,width,undefined,e.windMph,[0,0,map.getContainer().clientWidth,map.getContainer().clientHeight]).map(a=>({from:map.unproject(a.from).toArray(),to:map.unproject(a.to).toArray(),phase:a.phase,contributors:a.contributors,vector:a.vector}));
     }
     if(e.area){areaImage=areaTexture(e);if(map.getSource('cf-area'))map.getSource('cf-area').updateImage(areaImage);else{map.addSource('cf-area',{type:'image',...areaImage});map.addLayer({id:'cf-area-fill',type:'raster',source:'cf-area',paint:{'raster-opacity':1,'raster-fade-duration':0,'raster-resampling':'linear'}},'cf-event-line');}map.setLayoutProperty('cf-area-fill','visibility','visible');
     }else if(map.getLayer('cf-area-fill'))map.setLayoutProperty('cf-area-fill','visibility','none');
@@ -209,7 +221,7 @@
     const xs=pts.map(p=>p[0]),ys=pts.map(p=>p[1]),mobile=innerWidth<=640;
     S().map.fitBounds([[Math.min(...xs),Math.min(...ys)],[Math.max(...xs),Math.max(...ys)]],{padding:mobile?{top:Math.round(innerHeight*.65),bottom:35,left:25,right:25}:{top:100,bottom:60,left:700,right:80},maxZoom:5.5,duration:0});
   }
-  function setMode(mode){state.mode=mode;controls();}
+  function setMode(mode){if(!['everyone','expert'].includes(mode))return;state.mode=mode;if(mode==='everyone'&&state.event)setEvent(state.event);else controls();}
   function setView(view){if(!['baseline','scenario','change'].includes(view))return;state.view=view;if(state.result){renderResult();drawResult();}else paint();}
   async function setWindow(i){if(!state.result)return;state.windowIndex=Math.max(0,Math.min(state.result.windows.length-1,i));await S().select(state.result.windows[state.windowIndex].leadHours);if(state.open&&state.result){renderResult();drawResult();}}
   function forecastChanged(){if(!state.open)return;if(state.result&&state.release===S().manifest.release_id){const i=state.result.windows.findIndex(w=>w.leadHours===S().active.run.lead_hours);if(i>=0){state.windowIndex=i;renderResult();drawResult();return;}}invalidate('Published forecast changed. Run to update the comparison.');}
@@ -229,12 +241,12 @@
   function moveHandle(e){if(brush?.active)return;if(drag!==null){const p=[e.lngLat.lng,e.lngLat.lat],next=structuredClone(drag.whole?drag.event:state.event);if(drag.whole){const dx=p[0]-drag.start[0],dy=p[1]-drag.start[1];next.track=next.track.map(q=>[q[0]+dx,q[1]+dy,q[2]]);next.center=[next.center[0]+dx,next.center[1]+dy];}
       else if(next.track){next.track[drag.index]=[...p,next.track[drag.index][2]];if(drag.index===0)next.center=[...p];}
       else{const dx=p[0]-next.center[0],dy=p[1]-next.center[1];next.center=p;if(next.area){const b=next.area.bounds;next.area.bounds=[b[0]+dx,b[1]+dy,b[2]+dx,b[3]+dy];}if(next.windPath)next.windPath=next.windPath.map(q=>[q[0]+dx,q[1]+dy]);}
-      try{state.event=normalized(next);invalidate('Event moved. Run to update.');geometry();}catch{}return;
+      try{state.event=normalized(publicEvent(next));invalidate('Event moved. Run to update.');geometry();}catch{}return;
     }if(state.result&&state.view!=='baseline'){const cell=S().map.queryRenderedFeatures(e.point,{layers:['cf-result-fill']})[0];if(cell)inspect(cell);}
   }
   function up(){if(drag!==null){drag=null;suppressClick=true;setTimeout(()=>suppressClick=false,200);if(saved.pan)S().map.dragPan.enable();controls();}}
   function key(e){if(e.key==='Escape'){if(brush?.active){brush.close();return;}if(drawing){drawing=null;geometry();controls();}else closePredictor();}}
-  async function open(){if(state.open)return true;if(!S()?.ready){$('counterfactual-open').textContent='Forecast loading · retry shortly';return false;}build();const s=S(),map=s.map;window.fireEyeCore?.resetDownload?.();state.event||=defaults('high_wind',s.selected||[-120,38]);saved={opacity:s.riskOpacity,visible:s.riskVisible,click:s.onMapClick,inspection:!$('inspection').hidden,selected:s.selected,pan:map.dragPan.isEnabled(),padding:map.getPadding()};state.open=true;panel.hidden=false;$('inspection').hidden=true;s.onMapClick=click;$('counterfactual-open').setAttribute('aria-expanded','true');document.body.classList.add('counterfactual-active');installLayers();const windCanvas=node('canvas','','cf-wind-animation');windCanvas.id='cf-wind-animation';map.getContainer().append(windCanvas);animation=requestAnimationFrame(animate);map.on('zoomend',geometry);controls();geometry();state.result=null;output.hidden=true;message('Published baseline ready. Choose conditions, then run.');map.on('mousedown',down);map.on('mousemove',moveHandle);map.on('mouseup',up);map.on('touchstart',down);map.on('touchmove',moveHandle);map.on('touchend',up);window.addEventListener('mouseup',up);window.addEventListener('keydown',key);window.addEventListener('fire-eye:forecast-changed',forecastChanged);$('cf-close').focus();return true;}
+  async function open(){if(state.open)return true;if(!S()?.ready){$('counterfactual-open').textContent='Forecast loading · retry shortly';return false;}const s=S(),map=s.map,previous={opacity:s.riskOpacity,visible:s.riskVisible,click:s.onMapClick,inspection:!$('inspection').hidden,selected:s.selected,pan:map.dragPan.isEnabled(),padding:map.getPadding()};await loadCoast();if(state.open)return true;build();window.fireEyeCore?.resetDownload?.();state.event||=defaults('high_wind',s.selected||[-120,38]);saved=previous;state.open=true;panel.hidden=false;$('inspection').hidden=true;s.onMapClick=click;$('counterfactual-open').setAttribute('aria-expanded','true');document.body.classList.add('counterfactual-active');installLayers();const windCanvas=node('canvas','','cf-wind-animation');windCanvas.id='cf-wind-animation';map.getContainer().append(windCanvas);animation=requestAnimationFrame(animate);map.on('zoomend',geometry);controls();geometry();state.result=null;output.hidden=true;message('Published baseline ready. Choose conditions, then run.');map.on('mousedown',down);map.on('mousemove',moveHandle);map.on('mouseup',up);map.on('touchstart',down);map.on('touchmove',moveHandle);map.on('touchend',up);window.addEventListener('mouseup',up);window.addEventListener('keydown',key);window.addEventListener('fire-eye:forecast-changed',forecastChanged);$('cf-close').focus();return true;}
   function closePredictor(){if(!state.open)return;brush?.close();S().map.off('zoomend',geometry);cancelAnimationFrame(animation);icons.forEach(icon=>icon.remove());icons=[];stormSymbols.forEach(s=>s.marker.remove());stormSymbols=[];$('cf-wind-animation')?.remove();token++;state.open=false;drawing=null;drag=null;state.result=null;output.hidden=true;panel.hidden=true;const s=S(),map=s.map;if(s.onMapClick===click)s.onMapClick=saved.click;s.setRiskDisplay(saved.opacity,saved.visible);if(saved.pan)map.dragPan.enable();else map.dragPan.disable();map.setPadding(saved.padding);s.selected=saved.selected;$('inspection').hidden=!saved.inspection;
     for(const [name,fn] of [['mousedown',down],['mousemove',moveHandle],['mouseup',up],['touchstart',down],['touchmove',moveHandle],['touchend',up]])map.off(name,fn);window.removeEventListener('mouseup',up);window.removeEventListener('keydown',key);window.removeEventListener('fire-eye:forecast-changed',forecastChanged);
     for(const id of ['cf-result-fill','cf-area-fill','cf-event-fill','cf-event-line','cf-event-handles'])if(map.getLayer(id))map.removeLayer(id);for(const id of ['cf-result','cf-area','cf-event'])if(map.getSource(id))map.removeSource(id);document.body.classList.remove('counterfactual-active');$('counterfactual-open').setAttribute('aria-expanded','false');$('counterfactual-open').focus();}

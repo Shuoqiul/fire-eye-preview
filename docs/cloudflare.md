@@ -20,3 +20,5 @@ Run `npm run build` and `npm test` before connecting the app. Wrangler authentic
 Use branch `dev` for the advanced animation version. In Cloudflare Git builds set the build command to `npm run build` and the non-production deploy command to `npx wrangler preview`. Wrangler defaults the Preview name to the current branch, so this produces the short `dev` name. Production `main` continues to use `npx wrangler deploy`. Locally, `npm run preview` runs the build first and then invokes the same Preview command.
 
 Reference: [Cloudflare Previews setup](https://developers.cloudflare.com/workers/previews/get-started/). The Preview CLI help was checked with Wrangler 4.159.0; this repository change does not create an account-side deployment.
+
+The shared `wrangler.jsonc` includes the required `"previews": {}` block. Assets and compatibility settings stay at the top level, as specified in [Preview configuration](https://developers.cloudflare.com/workers/previews/configuration/#wrangler-configuration-file). This also keeps future branches preview-ready.

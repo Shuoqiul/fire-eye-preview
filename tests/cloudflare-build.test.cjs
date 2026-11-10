@@ -1,6 +1,8 @@
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs/promises'),path=require('node:path'),crypto=require('node:crypto');
 const root=path.join(__dirname,'..');
 test('Cloudflare bundle uses pinned verified redirects and preserves local fallback',async()=>{
+ const config=JSON.parse((await fs.readFile(path.join(root,'wrangler.jsonc'),'utf8')).replace(/^\s*\/\/.*$/gm,''));
+ assert.ok(config.previews&&typeof config.previews==='object','Wrangler preview requires the previews block');assert.equal(config.assets.directory,'./dist');
  const {build}=await import('../scripts/build-cloudflare.mjs');
  const result=await build();
  const manifest=JSON.parse(await fs.readFile(path.join(root,'latest.json'))),mapping=JSON.parse(await fs.readFile(path.join(root,'cloudflare-releases.json'))).releases[manifest.release_id];

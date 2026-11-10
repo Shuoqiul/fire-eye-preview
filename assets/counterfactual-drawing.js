@@ -5,23 +5,54 @@
  const distance=(a,b)=>Math.hypot(b[0]-a[0],b[1]-a[1]);
  function sample(points,count=6){const p=copy(points);if(!Number.isInteger(count)||count<2||count>512||!p.length)throw Error('Sample count must be 2–512 with at least one point.');if(p.length===1)return Array.from({length:count},()=>[...p[0]]);const arcs=[0];for(let i=1;i<p.length;i++)arcs.push(arcs.at(-1)+distance(p[i-1],p[i]));const out=[];let segment=1;for(let i=0;i<count;i++){const at=arcs.at(-1)*i/(count-1);while(segment<p.length-1&&arcs[segment]<at)segment++;const a=p[segment-1],b=p[segment],span=arcs[segment]-arcs[segment-1],t=span?(at-arcs[segment-1])/span:0;out.push([a[0]+(b[0]-a[0])*t,a[1]+(b[1]-a[1])*t]);}out[0]=[...p[0]];out[count-1]=[...p.at(-1)];return out;}
  function smooth(points,iterations=2){let p=copy(points);if(p.length<3)return p;const simplified=[p[0]];for(let i=1;i<p.length-1;i++)if(distance(p[i],simplified.at(-1))>=2)simplified.push(p[i]);simplified.push(p.at(-1));p=simplified.length>128?sample(simplified,128):simplified;for(let n=0;n<Math.min(3,Math.max(0,iterations));n++){const next=[p[0]];for(let i=1;i<p.length;i++){const a=p[i-1],b=p[i];next.push([a[0]*.75+b[0]*.25,a[1]*.75+b[1]*.25],[a[0]*.25+b[0]*.75,a[1]*.25+b[1]*.75]);}next.push(p.at(-1));p=next.length>512?sample(next,512):next;}return p;}
- function windField(points,width=100,spacing=30,speed=27){
+ function windField(points,width=100,spacing=undefined,speed=27,viewport){
   const p=copy(points);if(p.length<2)return[];
-  if(!Number.isFinite(width)||width<=0||!Number.isFinite(spacing)||spacing<=0||!Number.isFinite(speed)||speed<0)throw Error('Wind field dimensions and speed must be finite and positive.');
-  const length=p.slice(1).reduce((sum,b,i)=>sum+distance(p[i],b),0);if(!length||!speed)return[];
-  const centres=sample(p,Math.max(2,Math.min(90,Math.ceil(length/spacing)+1))),lanes=Math.max(1,Math.min(11,Math.ceil(width/spacing))),cells=new Map();
-  for(let i=0;i<centres.length;i++){
-    const a=centres[Math.max(0,i-1)],b=centres[Math.min(centres.length-1,i+1)],d=distance(a,b)||1,t=[(b[0]-a[0])/d,(b[1]-a[1])/d],normal=[-t[1],t[0]];
-    for(let lane=-Math.floor(lanes/2);lane<=Math.floor(lanes/2);lane++){
-      const offset=lane*spacing,strength=Math.max(.15,1-Math.abs(offset)/(width*.65)),c=[centres[i][0]+normal[0]*offset,centres[i][1]+normal[1]*offset],gx=Math.round(c[0]/spacing),gy=Math.round(c[1]/spacing),id=gx+','+gy;
-      const cell=cells.get(id)||{id,center:[gx*spacing,gy*spacing],vx:0,vy:0,contributors:0,phase:((i*.5+lane*.137)%1+1)%1};
-      cell.vx+=t[0]*strength;cell.vy+=t[1]*strength;cell.contributors++;cells.set(id,cell);
-    }
+  if(!Number.isFinite(width)||width<=0||(spacing!=null&&!(Number.isFinite(spacing)&&spacing>0))||!Number.isFinite(speed)||speed<0)throw Error('Wind field dimensions and speed must be finite and positive.');
+  if(!speed)return[];
+  const segments=[];let pathLength=0;
+  for(let i=1;i<p.length;i++){
+   const a=p[i-1],b=p[i],span=distance(a,b);if(!span)continue;
+   const tangent=[(b[0]-a[0])/span,(b[1]-a[1])/span];segments.push({a,b,span,tangent,normal:[-tangent[1],tangent[0]],start:pathLength,index:i-1});pathLength+=span;
   }
-  return [...cells.values()].filter(c=>Math.hypot(c.vx,c.vy)>.001).slice(0,300).map(c=>{
-    const dx=c.vx*speed*.8,dy=c.vy*speed*.8;
-    return {id:c.id,from:[c.center[0]-dx/2,c.center[1]-dy/2],to:[c.center[0]+dx/2,c.center[1]+dy/2],strength:Math.hypot(c.vx,c.vy),phase:c.phase,contributors:c.contributors,vector:[c.vx*speed,c.vy*speed]};
-  });
+  if(!pathLength)return[];
+  const taper=offset=>Math.max(.15,1-.72*Math.pow(Math.abs(offset)/(width/2),1.5)),lateral=spacing||Math.max(16,Math.min(28,width/4)),laneCount=Math.max(1,Math.min(9,Math.floor(width/lateral)+1)),out=[],seen=new Set();
+  let candidates=0;
+  // Bound candidate work before rendering; viewport clipping retains visible density after zoom.
+  for(let laneIndex=0;laneIndex<laneCount;laneIndex++){
+   const lane=-width/2+width*(laneIndex+.5)/laneCount,baseLength=taper(lane)*speed,pitch=baseLength+5,lead=pitch/2;
+   let at=lead,stationIndex=0;
+   for(const source of segments){
+    const offset=source.normal.map(n=>n*lane),a=source.a.map((v,i)=>v+offset[i]),b=source.b.map((v,i)=>v+offset[i]),range=clipWindSegment(a,b,viewport,Math.min(600,speed*2+8));if(!range)continue;
+    const lo=source.start+range[0]*source.span,hi=source.start+range[1]*source.span;
+    if(at<lo)at=lead+Math.ceil((lo-lead)/pitch)*pitch;
+    while(at<hi-1e-7){
+     if(++candidates>2400)return out;
+     const along=at-source.start,center=[a[0]+source.tangent[0]*along,a[1]+source.tangent[1]*along],vector=[0,0],members=[];
+     for(let i=0;i<segments.length;i++){
+      const segment=segments[i],dx=center[0]-segment.a[0],dy=center[1]-segment.a[1],u=dx*segment.tangent[0]+dy*segment.tangent[1],across=dx*segment.normal[0]+dy*segment.normal[1];
+      if(u< -1e-7||u>segment.span+1e-7||(i<segments.length-1&&u>=segment.span-1e-7)||Math.abs(across)>width/2+1e-7)continue;
+      const strength=taper(across);members.push({tangent:segment.tangent,strength,segment:segment.index});vector[0]+=segment.tangent[0]*strength*speed;vector[1]+=segment.tangent[1]*strength*speed;
+     }
+     const length=Math.hypot(...vector),phase=((stationIndex++*.5001+laneIndex*.137)%1+1)%1,key=Math.round(center[0]/2)+','+Math.round(center[1]/2);
+     if(length>1e-6&&at+length/2<=pathLength+1e-7&&!seen.has(key)){
+      seen.add(key);out.push({id:key,from:center.map((v,i)=>v-vector[i]/2),to:center.map((v,i)=>v+vector[i]/2),vector,strength:length/speed,phase,contributors:members.length,members,lane,pathLane:lane,station:at,localStation:along,segment:source.index,laneSpacing:length+5,laneGap:5,pathLength});
+      if(out.length>=1200)return out;
+     }
+     const alignment=length?Math.abs(vector[0]*source.tangent[0]+vector[1]*source.tangent[1])/length:1;
+     at+=(length>1e-6?length+5:pitch)/Math.max(.2,alignment);
+    }
+   }
+  }
+  return out;
+ }
+ function clipWindSegment(a,b,viewport,padding){
+  if(!viewport)return[0,1];
+  let lo=0,hi=1;const dx=b[0]-a[0],dy=b[1]-a[1];
+  for(const [p,q] of [[-dx,a[0]-viewport[0]+padding],[dx,viewport[2]+padding-a[0]],[-dy,a[1]-viewport[1]+padding],[dy,viewport[3]+padding-a[1]]]){
+   if(!p){if(q<0)return null;continue;}
+   const t=q/p;if(p<0)lo=Math.max(lo,t);else hi=Math.min(hi,t);if(lo>hi)return null;
+  }
+  return[lo,hi];
  }
  function windFrame(time,phase=0){
   const cycle=(((time/2400-phase)%1)+1)%1,head=cycle*4,tail=head-1,start=Math.max(0,tail),end=Math.min(1,head);
