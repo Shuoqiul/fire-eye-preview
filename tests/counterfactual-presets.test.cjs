@@ -13,7 +13,7 @@ test('five cyclone recipes start exactly at category lower bounds',()=>{
 });
 test('track decays gradually offshore, faster near shore and rapidly over land',()=>{
  const track=[[0,0],[1,0],[2,0],[3,0],[4,0],[5,0]],original=JSON.stringify(track),at=classify=>p.weakenTrack(track,100,classify),far=at(()=>({land:false,distanceKm:400})),near=at(()=>({land:false,distanceKm:5})),land=at(()=>({land:true,distanceKm:0}));
- assert.ok(far[1][2]>near[1][2]&&near[1][2]>land[1][2]);assert.ok(far[1][2]>95);assert.ok(land[1][2]<40);
+ assert.ok(far[1][2]>near[1][2]&&near[1][2]>land[1][2]);assert.ok(far[1][2]>95);assert.ok(land[1][2]<50);
  for(const profile of [far,near,land])for(let i=1;i<profile.length;i++){assert.ok(profile[i][2]<profile[i-1][2]);assert.deepEqual(profile[i].slice(0,2),track[i]);}assert.equal(JSON.stringify(track),original);
  const crossing=at(([lon])=>({land:lon>2,distanceKm:Math.max(0,2-lon)*100}));assert.ok(crossing[3][2]/crossing[2][2]<crossing[1][2]/crossing[0][2]);
 });

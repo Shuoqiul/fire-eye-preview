@@ -12,38 +12,52 @@
   const segments=[];let pathLength=0;
   for(let i=1;i<p.length;i++){
    const a=p[i-1],b=p[i],span=distance(a,b);if(!span)continue;
-   const tangent=[(b[0]-a[0])/span,(b[1]-a[1])/span];segments.push({a,b,span,tangent,normal:[-tangent[1],tangent[0]],start:pathLength,index:i-1});pathLength+=span;
+   const tangent=[(b[0]-a[0])/span,(b[1]-a[1])/span],arc=pathLength;segments.push({a,b,span,tangent,normal:[-tangent[1],tangent[0]],start:arc,index:i-1});pathLength+=span;
   }
   if(!pathLength)return[];
-  const taper=offset=>Math.max(.15,1-.72*Math.pow(Math.abs(offset)/(width/2),1.5)),lateral=spacing||Math.max(16,Math.min(28,width/4)),laneCount=Math.max(1,Math.min(9,Math.floor(width/lateral)+1)),out=[],seen=new Set();
-  let candidates=0;
+  const taper=offset=>Math.max(.15,1-.72*Math.pow(Math.abs(offset)/(width/2),1.5)),localSpeed=offset=>speed*taper(offset),lateral=spacing||24,laneCount=Math.max(1,Math.ceil((width-1e-7)/2/lateral)),laneIndexes=Array.from({length:laneCount*2+1},(_,i)=>i-laneCount),out=[],seen=new Set();
+  let candidates=0,hasMerged=false;
   // Bound candidate work before rendering; viewport clipping retains visible density after zoom.
-  for(let laneIndex=0;laneIndex<laneCount;laneIndex++){
-   const lane=-width/2+width*(laneIndex+.5)/laneCount,baseLength=taper(lane)*speed,pitch=baseLength+5,lead=pitch/2;
-   let at=lead,stationIndex=0;
+  for(let laneIndex=0;laneIndex<laneIndexes.length;laneIndex++){
+   const lane=laneIndexes[laneIndex]*lateral,pitch=lateral,stagger=((lane/lateral)%4+4)%4*.071,baseLength=localSpeed(lane);
+   const lead=(speed+5)/2;let at=lead;
    for(const source of segments){
     const offset=source.normal.map(n=>n*lane),a=source.a.map((v,i)=>v+offset[i]),b=source.b.map((v,i)=>v+offset[i]),range=clipWindSegment(a,b,viewport,Math.min(600,speed*2+8));if(!range)continue;
     const lo=source.start+range[0]*source.span,hi=source.start+range[1]*source.span;
-    if(at<lo)at=lead+Math.ceil((lo-lead)/pitch)*pitch;
+    if(at<lo)at=lead+Math.ceil((lo-lead)/(speed+5))*(speed+5);
+    const cut=lo>0?lo:0,atStep=Math.floor(cut/pitch)+.5+stagger;
+    if(at<cut)at=pitch*atStep;
     while(at<hi-1e-7){
      if(++candidates>2400)return out;
-     const along=at-source.start,center=[a[0]+source.tangent[0]*along,a[1]+source.tangent[1]*along],vector=[0,0],members=[];
-     for(let i=0;i<segments.length;i++){
-      const segment=segments[i],dx=center[0]-segment.a[0],dy=center[1]-segment.a[1],u=dx*segment.tangent[0]+dy*segment.tangent[1],across=dx*segment.normal[0]+dy*segment.normal[1];
-      if(u< -1e-7||u>segment.span+1e-7||(i<segments.length-1&&u>=segment.span-1e-7)||Math.abs(across)>width/2+1e-7)continue;
-      const strength=taper(across);members.push({tangent:segment.tangent,strength,segment:segment.index});vector[0]+=segment.tangent[0]*strength*speed;vector[1]+=segment.tangent[1]*strength*speed;
+     const along=at-source.start,center=[a[0]+source.tangent[0]*along,a[1]+source.tangent[1]*along],vector=[0,0],found=[];
+     for(const segment of segments){
+      const dx=center[0]-segment.a[0],dy=center[1]-segment.a[1],u=dx*segment.tangent[0]+dy*segment.tangent[1],across=dx*segment.normal[0]+dy*segment.normal[1];
+      if(u< -1e-7||u>segment.span+1e-7||Math.abs(across)>width/2+1e-7)continue;
+      const strength=taper(across),member={tangent:segment.tangent,strength,speed:speed,speedAt:localSpeed(across),segment:segment.index,across};
+      if(!found.some(other=>other.segment===member.segment)){found.push(member);vector[0]+=segment.tangent[0]*strength;vector[1]+=segment.tangent[1]*strength;}
      }
-     const length=Math.hypot(...vector),phase=((stationIndex++*.5001+laneIndex*.137)%1+1)%1,key=Math.round(center[0]/2)+','+Math.round(center[1]/2);
-     if(length>1e-6&&at+length/2<=pathLength+1e-7&&!seen.has(key)){
-      seen.add(key);out.push({id:key,from:center.map((v,i)=>v-vector[i]/2),to:center.map((v,i)=>v+vector[i]/2),vector,strength:length/speed,phase,contributors:members.length,members,lane,pathLane:lane,station:at,localStation:along,segment:source.index,laneSpacing:length+5,laneGap:5,pathLength});
+     const members=found.length?found:[{tangent:source.tangent,strength:1,speed:speed,speedAt:speed,segment:source.index,across:lane}];
+     const summedStrength=Math.hypot(...vector),direction=summedStrength?vector.map(value=>value/summedStrength):[0,0],localStrength=Math.min(1,Math.max(...members.map(member=>member.strength)))*speed,primary=members[0],phase=((Math.round(at/pitch)*.5001+laneIndex*.137)%1+1)%1,key=Math.round(center[0]/2)+','+Math.round(center[1]/2);
+     if(localStrength>1e-6&&summedStrength>1e-9&&at+localStrength/2<=pathLength+1e-7&&!seen.has(key)){
+      const arrow={id:key,from:center.map((v,i)=>v-direction[i]*localStrength/2),to:center.map((v,i)=>v+direction[i]*localStrength/2),vector:direction.map(value=>value*localStrength),strength:localStrength/speed,phase,contributors:members.length,members,lane:primary.across,pathLane:lane,station:at,localStation:primary.segment===source.index?along:0,fromStation:at,segment:primary.segment,laneSpacing:localStrength+5,laneGap:5,pathLength};
+      if(!(members.length>1||hasMerged)||!out.some(other=>windConflict(arrow,other,lateral))){seen.add(key);out.push(arrow);hasMerged||=members.length>1;}
       if(out.length>=1200)return out;
      }
-     const alignment=length?Math.abs(vector[0]*source.tangent[0]+vector[1]*source.tangent[1])/length:1;
-     at+=(length>1e-6?length+5:pitch)/Math.max(.2,alignment);
+     const next=Math.max(baseLength,localStrength)+5;
+     at+=next;
     }
    }
   }
   return out;
+ }
+ function windConflict(a,b,lateral){
+  if(a.contributors<2&&b.contributors<2)return false;
+  const al=Math.hypot(...a.vector),bl=Math.hypot(...b.vector),dx=(a.from[0]+a.to[0]-b.from[0]-b.to[0])/2,dy=(a.from[1]+a.to[1]-b.from[1]-b.to[1])/2;
+  if(Math.hypot(dx,dy)>(al+bl)/2+5)return false;
+  const dot=(a.vector[0]*b.vector[0]+a.vector[1]*b.vector[1])/(al*bl);
+  if(dot>.8&&Math.abs((dx*a.vector[0]+dy*a.vector[1])/al)<(al+bl)/2+5&&Math.abs((dx*a.vector[1]-dy*a.vector[0])/al)<lateral*.5)return true;
+  const cross=(p,q,r)=>(q[0]-p[0])*(r[1]-p[1])-(q[1]-p[1])*(r[0]-p[0]);
+  return cross(a.from,a.to,b.from)*cross(a.from,a.to,b.to)<-1e-6&&cross(b.from,b.to,a.from)*cross(b.from,b.to,a.to)<-1e-6;
  }
  function clipWindSegment(a,b,viewport,padding){
   if(!viewport)return[0,1];

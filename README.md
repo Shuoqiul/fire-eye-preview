@@ -21,7 +21,7 @@ Public dataset: https://huggingface.co/datasets/yx21e/fire-eye-forecasts-preview
 
 The map sidebar includes a separate **Counterfactual predictor** entry. It applies five event rules (hurricane, thunderstorm, high wind, heavy rain and prescribed burn) to the selected published forecast issue. Everyone presets and Expert numeric fields share scenario parameters. Baseline, scenario and change views use the same map and available forecast windows.
 
-The calculation is an exploratory rule response on published scores. Published occupancy is used as a receptivity proxy; physical driver data and calibrated response magnitudes remain future work. Results describe scenario scores and score changes. Method details and current verification are maintained in [PROJECT_STATUS.md](../PROJECT_STATUS.md).
+The calculation is an exploratory rule response on published scores. Published occupancy is used as a receptivity proxy; physical driver data and calibrated response magnitudes remain future work. Results describe scenario scores and score changes. Long-term context is maintained in [PROJECT_STATUS.md](../PROJECT_STATUS.md); current formulas and validation are in the [mechanism handoff](docs/changes/2026-11-10-mechanisms-and-cloud-churn.md).
 
 Serve this directory over HTTP to preview locally:
 
@@ -51,4 +51,6 @@ Weather-symbol, wind-vector and preset visual refinements are documented in [wea
 
 The public editor uses complete event recipes and now/24-hour timing. Expert mode retains timing and numerical edits. High-wind width adjusts across the drawn path, while arrow density adapts to wind speed. See [public recipes and Preview fix](docs/changes/2026-11-10-public-presets-and-preview.md).
 
-This `dev` branch retains the experimental [six-keyframe area motion](docs/changes/2026-11-10-counterfactual-motion.md), including moving lightning/rain glyphs and direction/speed controls.
+Current mechanism equations, visual changes and the questions for scientific review are collected in [mechanisms and cloud-churn handoff](docs/changes/2026-11-10-mechanisms-and-cloud-churn.md). Wind width is 20–200 km. Change maps keep event tint separate from score differences.
+
+This `dev` branch uses fixed-centre contour churn and outward fade for area events. Cloud activity changes tempo; the direction control and rigid translation are removed. Production `main` keeps static area rendering.

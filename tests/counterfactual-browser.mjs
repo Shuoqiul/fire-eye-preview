@@ -21,6 +21,13 @@ for(const type of ['high_wind','heavy_rain','thunderstorm','prescribed_burn','hu
  console.log(JSON.stringify(result));
  assert.ok(result.span>0,type+' has an effect on real cells');
  if(!result.windows?.length)throw Error('run failed '+type+': '+result.status);
+ if(type==='prescribed_burn'){
+  assert.ok(await page.evaluate(()=>fireEyeCounterfactual.result.windows.every(w=>w.delta.every(d=>!Number.isFinite(d)||d<=0))));
+  assert.equal(await page.evaluate(()=>fireEyePreview.riskVisible),false);
+  assert.equal(await page.evaluate(()=>fireEyePreview.map.getLayoutProperty('cf-area-fill','visibility')),'none');
+  await page.evaluate(()=>fireEyeCounterfactual.setView('baseline'));assert.equal(await page.evaluate(()=>fireEyePreview.map.getLayoutProperty('cf-area-fill','visibility')),'visible');
+  await page.evaluate(()=>fireEyeCounterfactual.setView('change'));
+ }
  if(type==='high_wind'){
   await page.evaluate(()=>fireEyeCounterfactual.setView('scenario'));
   await page.waitForTimeout(500);

@@ -25,6 +25,7 @@
     const map=S()?.map,c=map?.getCenter(),view=center||(()=>{if(type==='hurricane'&&map){const r=map.getContainer().getBoundingClientRect();const q=map.unproject([innerWidth>640?(Math.min(700,r.width*.5)+r.width)/2:r.width/2,innerWidth>640?r.height/2:r.height*.78]);return[q.lng,q.lat];}return[c?.lng||-96,c?.lat||38];})(),e=model.defaults(type,view);
     if(type==='hurricane'&&window.FireDrawing){e.track=FireDrawing.coastalTrack(view,map?.getZoom()||4);e.center=e.track[0].slice(0,2);}
     if(['heavy_rain','thunderstorm','prescribed_burn'].includes(type))e.area=defaultArea(e);
+    if(type==='high_wind')e.radiusKm=50;
     if(type==='high_wind')e.windPath=[move(e.center,e.windFromDeg,150),move(e.center,(e.windFromDeg+180)%360,150)];
     return FirePresets.apply(e,undefined,coast||undefined);
   }
@@ -38,6 +39,7 @@
   function publicEvent(value){
     if(state.mode!=='everyone')return value;
     const next={...value,startH:0,durationH:24};
+    if(next.type==='high_wind')next.radiusKm=Math.max(10,Math.min(100,next.radiusKm));
     if(next.type==='hurricane'&&next.track)next.track=FirePresets.weakenTrack(next.track,next.track[0][2],coast||undefined);
     return next;
   }
@@ -57,7 +59,7 @@
     const run=button('Run comparison',()=>execute().catch(e=>message(e.message,'error')),'cf-run');run.id='cf-run';body.append(run);
     status=node('p','','cf-status');status.id='cf-status';status.setAttribute('role','status');status.setAttribute('aria-live','polite');body.append(status);
     const method=node('details','','cf-section');method.append(node('summary','Method & parameters'));
-    method.append(node('p','Rule-based scenario estimate on published occupancy scores. Wind, rain, lightning and fuel rules use the published score as a receptivity proxy. Response magnitudes await calibration.','cf-hint'),node('p','Rain uses fast/slow moisture memory; lightning uses a delayed response; treatment fades with age. Hurricane wind radii follow Radii-CLIPER. Public track winds weaken near land; wider shadows indicate stronger point winds. Expert mode accepts an optional landfall time.','cf-hint'));
+    method.append(node('p','Rule-based scenario estimate on published occupancy scores. Wind, rain, lightning and fuel rules use the published score as a receptivity proxy. Response magnitudes await calibration.','cf-hint'),node('p','Rain follows fuel wetting and recovery. Lightning adds a separate delayed ignition source. Treatment mixes treated and untreated areas; its strength fades with age. Hurricane wind radii follow Radii-CLIPER. Public track winds weaken near land; wider shadows indicate stronger point winds. Expert mode accepts an optional landfall time.','cf-hint'));
     const transfer=node('div','','cf-transfer'),exp=button('Export event',()=>{const blob=new Blob([JSON.stringify({version:1,event:state.event},null,2)],{type:'application/json'}),url=URL.createObjectURL(blob),a=node('a');a.href=url;a.download='fire-eye-counterfactual.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);});
     const imp=node('input');imp.type='file';imp.accept='.json,application/json';imp.id='cf-import';imp.onchange=async()=>{try{const file=imp.files[0];if(!file)return;if(file.size>100000)throw Error('Use an event JSON smaller than 100 kB.');const data=JSON.parse(await file.text());setEvent(data.event||data);message('Event imported. Run to compare.');}catch(e){message(e.message,'error');}finally{imp.value='';}};
     const label=node('label','Import event JSON','cf-hint');label.append(imp);transfer.append(exp,label);method.append(transfer);body.append(method);panel.append(body);
@@ -68,9 +70,9 @@
   }
   function windWidthControl(box,e){
     const wrap=node('label','','cf-field cf-width-control'),input=node('input'),value=node('output',(e.radiusKm*2).toFixed(0)+' km');
-    input.type='range';input.min=20;input.max=2000;input.step=10;input.value=e.radiusKm*2;input.id='cf-radiusKm';
+    input.type='range';input.min=20;input.max=200;input.step=10;input.value=e.radiusKm*2;input.id='cf-radiusKm';
     input.oninput=()=>{state.event=normalized({...state.event,radiusKm:Number(input.value)/2});value.textContent=input.value+' km';invalidate();geometry();};
-    input.onwheel=ev=>{ev.preventDefault();input.value=Math.max(20,Math.min(2000,Number(input.value)+(ev.deltaY<0?10:-10)));input.oninput();};
+    input.onwheel=ev=>{ev.preventDefault();input.value=Math.max(20,Math.min(200,Number(input.value)+(ev.deltaY<0?10:-10)));input.oninput();};
     wrap.append(node('span','Corridor width · km'),input,value);box.append(wrap);
   }
   function controls() {
@@ -85,20 +87,20 @@
     if(state.mode==='everyone'&&e.type==='high_wind')windWidthControl(fields,e);
     if(state.mode==='expert') {
       numeric(fields,'Start · h from issue','startH',0,120);numeric(fields,'Duration · h','durationH',1,120);
-      if(e.type==='high_wind')numeric(fields,'Corridor width · km','radiusKm',20,2000,10,2);
+      if(e.type==='high_wind')numeric(fields,'Corridor width · km','radiusKm',20,200,10,2);
       if(['high_wind','hurricane'].includes(e.type)){numeric(fields,'Sustained wind · mph','windMph',0,250,.1);numeric(fields,'Wind from · °','windFromDeg',0,360,1);}
       if(['heavy_rain','thunderstorm','hurricane'].includes(e.type))numeric(fields,'Total rain · in','rainIn',0,50,.2);
       if(['thunderstorm','hurricane'].includes(e.type))numeric(fields,'Lightning coverage · %','coverage',0,100,1,100);
       if(e.type==='prescribed_burn'){numeric(fields,'Treated fraction · %','treatedFraction',0,100,1,100);numeric(fields,'Years since treatment','ageYears',0,100,.1);}
     }
     if(e.area){
-      const motion=e.motion||FireMotion.defaults();
-      for(const [key,label,max] of [['direction','Movement direction · °',359],['speed','Movement speed · px/s',100]]){
-        const wrap=node('label','','cf-field');wrap.append(node('span',label));const input=node('input');input.type='range';input.min=0;input.max=max;input.step=1;input.value=motion[key];input.id='cf-motion-'+key;
-        const value=node('output',String(motion[key]));input.oninput=()=>{const next={...motion,[key]:Number(input.value)};value.textContent=input.value;state.event.motion=next;motion[key]=next[key];motionStart=performance.now();};input.onwheel=ev=>{ev.preventDefault();input.value=Math.max(0,Math.min(max,Number(input.value)+(ev.deltaY<0?1:-1)));input.oninput();};wrap.append(input,value);fields.append(wrap);
-      }
+      const motion=e.motion||FireMotion.defaults(),wrap=node('label','','cf-field cf-width-control'),input=node('input'),value=node('output',String(motion.speed));
+      input.type='range';input.min=0;input.max=100;input.step=1;input.value=motion.speed;input.id='cf-motion-speed';
+      input.oninput=()=>{state.event.motion=FireMotion.normalize({speed:Number(input.value)});value.textContent=input.value;motionStart=performance.now();};
+      input.onwheel=ev=>{ev.preventDefault();input.value=Math.max(0,Math.min(100,Number(input.value)+(ev.deltaY<0?1:-1)));input.oninput();};
+      wrap.append(node('span','Cloud activity'),input,value);fields.append(wrap);
     }
-    box.append(fields);if(e.area)box.append(node('p','Illustrative movement; the comparison uses the confirmed footprint.','cf-hint'));
+    box.append(fields);
     if(e.type==='hurricane'&&state.mode==='expert') {
       const track=node('details','','cf-track-editor');track.open=state.mode==='expert';track.append(node('summary','Track · 12-hour positions · wind in kt'));
       const table=node('table'),header=node('tr');for(const name of ['Point','Lon','Lat','Vmax',''])header.append(node('th',name));table.append(header);
@@ -143,21 +145,24 @@
     });
   }
   function areaTexture(e,key=0){
-    const a=e.area,mask=Uint8Array.from(a.mask),inside=FireDrawing.distanceField(mask,a.width,a.height),outside=FireDrawing.distanceField(Uint8Array.from(mask,v=>v?0:1),a.width,a.height,false),max=Math.max(1,...inside),intensity=FireDrawing.shadeIntensity(e),canvas=document.createElement('canvas');canvas.width=a.width;canvas.height=a.height;const ctx=canvas.getContext('2d'),image=ctx.createImageData(a.width,a.height),colour=e.type==='heavy_rain'?[35,107,190]:e.type==='thunderstorm'?[223,171,24]:[204,55,49];
+    const a=e.area,padding=Math.ceil(Math.min(a.width,a.height)*.3)+4,width=a.width+padding*2,height=a.height+padding*2,mask=new Uint8Array(width*height);
+    for(let y=0;y<a.height;y++)mask.set(a.mask.slice(y*a.width,(y+1)*a.width),(y+padding)*width+padding);
+    const inside=FireDrawing.distanceField(mask,width,height),outside=FireDrawing.distanceField(Uint8Array.from(mask,v=>v?0:1),width,height,false),max=inside.reduce((m,v)=>Math.max(m,v),1),intensity=FireDrawing.shadeIntensity(e),canvas=document.createElement('canvas');canvas.width=width;canvas.height=height;
+    const ctx=canvas.getContext('2d'),image=ctx.createImageData(width,height),fade=1-key/5;
     for(let i=0;i<mask.length;i++){
-      let strength=mask[i]?.25+.75*inside[i]/max:Math.max(0,1-outside[i]/Math.max(3,max*.3))*.16;
-      if(!strength)continue;const level=Math.ceil(strength*6)/6*intensity;
-      image.data[i*4]=Math.round(colour[0]+(255-colour[0])*(1-level)*.7);image.data[i*4+1]=Math.round(colour[1]+(255-colour[1])*(1-level)*.7);image.data[i*4+2]=Math.round(colour[2]+(255-colour[2])*(1-level)*.7);const remaining=1-key/5,fade=Math.max(0,(strength-(1-remaining)*.65)/(.35+remaining*.65))*remaining;
-      image.data[i*4+3]=Math.round((mask[i]?.18+level*.6:strength*.6)*intensity*255*fade);
+      const distance=FireMotion.contour(mask[i]?inside[i]:-outside[i],i%width-width/2,Math.floor(i/width)-height/2,key,max),core=distance>0,strength=core?.25+.75*Math.min(1,distance/max):Math.max(0,1+distance/Math.max(3,max*.3))*.16;
+      if(strength)image.data.set(FireArea.pixel(e.type,strength,intensity,core,fade),i*4);
     }
-    ctx.putImageData(image,0,0);const b=a.bounds;return {url:canvas.toDataURL(),coordinates:[[b[0],b[3]],[b[2],b[3]],[b[2],b[1]],[b[0],b[1]]]};
+    ctx.putImageData(image,0,0);
+    const b=a.bounds,merc=lat=>(1-Math.log(Math.tan(Math.PI/4+lat*Math.PI/360))/Math.PI)/2,lat=y=>(Math.atan(Math.exp(Math.PI*(1-2*y)))*2-Math.PI/2)*180/Math.PI,dy=(merc(b[1])-merc(b[3]))*padding/a.height,north=lat(merc(b[3])-dy),south=lat(merc(b[1])+dy),dx=(b[2]-b[0])*padding/a.width;
+    return {url:canvas.toDataURL(),coordinates:[[b[0]-dx,north],[b[2]+dx,north],[b[2]+dx,south],[b[0]-dx,south]]};
   }
   function geometry() {
     if(!state.open)return;const map=S().map,e=state.event,f=[];updateIcons(e);windArrows=[];
     if(e.type==='hurricane')f.push(feature(shadow(e),'shadow'),line(e.track.map(p=>p.slice(0,2)),'track'));
     if(e.type==='high_wind'){
       const guide=e.windPath||[move(e.center,e.windFromDeg,150),move(e.center,(e.windFromDeg+180)%360,150)];
-      const screen=guide.map(p=>{const q=map.project(p);return[q.x,q.y];}),width=Math.max(2,Math.abs(map.project(move(e.center,90,e.radiusKm)).x-map.project(e.center).x)*2);
+      const screen=guide.map(p=>{const q=map.project(p);return[q.x,q.y];}),anchor=guide[Math.floor(guide.length/2)],width=Math.max(2,Math.abs(map.project(move(anchor,90,e.radiusKm)).x-map.project(anchor).x)*2);
       windArrows=FireDrawing.windField(screen,width,undefined,e.windMph,[0,0,map.getContainer().clientWidth,map.getContainer().clientHeight]).map(a=>({from:map.unproject(a.from).toArray(),to:map.unproject(a.to).toArray(),phase:a.phase,contributors:a.contributors,vector:a.vector}));
     }
     if(e.area){motionTextures=Array.from({length:6},(_,key)=>areaTexture(e,key));motionStart=performance.now();areaImage=motionTextures[0];if(map.getSource('cf-area'))map.getSource('cf-area').updateImage(areaImage);else{map.addSource('cf-area',{type:'image',...areaImage});map.addLayer({id:'cf-area-fill',type:'raster',source:'cf-area',paint:{'raster-opacity':1,'raster-fade-duration':0,'raster-resampling':'linear'}},'cf-event-line');}map.setLayoutProperty('cf-area-fill','visibility','visible');
@@ -165,7 +170,7 @@
     }else{for(const layer of ['cf-area-fill','cf-area-next-fill'])if(map.getLayer(layer))map.setLayoutProperty(layer,'visibility','none');}
     updateStormSymbols(e);
     const handles=e.type==='hurricane'?e.track:e.area?[e.center]:e.polygon||[e.center];handles.forEach((p,index)=>f.push(feature({type:'Point',coordinates:p.slice(0,2)},'handle',{index})));
-    map.getSource('cf-event').setData(fc(f));
+    map.getSource('cf-event').setData(fc(f));paint();
   }
   function installLayers(){const map=S().map;map.addSource('cf-event',{type:'geojson',data:fc([])});map.addSource('cf-result',{type:'geojson',data:fc([])});
     map.addLayer({id:'cf-result-fill',type:'fill',source:'cf-result',paint:{'fill-color':'#194d3f','fill-opacity':.9,'fill-antialias':false}});
@@ -182,14 +187,12 @@
     if(drops)for(const cell of layout.rain)add('rain',cell.position,FireWeatherSymbols.rainSvg(drops,'currentColor'),cell.cornerCount);
   }
   function positionStormSymbols(translate=p=>p,opacity=1){for(const symbol of stormSymbols){symbol.marker.setLngLat(translate(symbol.position));symbol.marker.getElement().style.opacity=opacity;}}
-  const motionY=lat=>(1-Math.log(Math.tan(Math.PI/4+lat*Math.PI/360))/Math.PI)/2;
-  const motionLat=y=>(Math.atan(Math.exp(Math.PI*(1-2*y)))*2-Math.PI/2)*180/Math.PI;
   function motionFrame(time){
-    if(!state.event.area||!motionTextures.length||!S().map.getSource('cf-area-next'))return;
-    const map=S().map,reduced=matchMedia('(prefers-reduced-motion:reduce)').matches,frame=FireMotion.frame(state.event.motion||{direction:0,speed:12},reduced?0:Math.max(0,time-motionStart)),base=motionTextures[0].coordinates,nw=map.project(base[0]),shift=map.unproject([nw.x+frame.dx,nw.y+frame.dy]),dx=shift.lng-base[0][0],dy=motionY(shift.lat)-motionY(base[0][1]),translate=p=>[p[0]+dx,motionLat(motionY(p[1])+dy)],coordinates=base.map(translate);
-    for(const [id,key] of [['cf-area',frame.key],['cf-area-next',frame.next]]){const source=map.getSource(id);if(source._cfFrame!==key){source.updateImage({...motionTextures[key],coordinates});source._cfFrame=key;}else source.setCoordinates(coordinates);}
+    if(!state.event.area||!motionTextures.length||!S().map.getSource('cf-area-next')||(state.result&&state.view!=='baseline'))return;
+    const map=S().map,reduced=matchMedia('(prefers-reduced-motion:reduce)').matches,frame=FireMotion.frame(state.event.motion||FireMotion.defaults(),reduced?0:Math.max(0,time-motionStart));
+    for(const [id,key] of [['cf-area',frame.key],['cf-area-next',frame.next]]){const source=map.getSource(id),texture=motionTextures[key];if(source._cfImage!==texture){source.updateImage(texture);source._cfImage=texture;}}
     map.setPaintProperty('cf-area-fill','raster-opacity',1-frame.mix);map.setPaintProperty('cf-area-next-fill','raster-opacity',frame.mix);
-    positionStormSymbols(translate,frame.opacity);
+    positionStormSymbols(p=>p,frame.opacity);
   }
   function animate(time){
     if(!state.open)return;motionFrame(time);const map=S().map,canvas=$('cf-wind-animation');if(canvas){const dpr=Math.min(devicePixelRatio,2),rect=map.getContainer().getBoundingClientRect();if(canvas.width!==Math.round(rect.width*dpr)||canvas.height!==Math.round(rect.height*dpr)){canvas.width=Math.round(rect.width*dpr);canvas.height=Math.round(rect.height*dpr);}const ctx=canvas.getContext('2d');ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,rect.width,rect.height);const reduced=matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -205,7 +208,10 @@
   function paint() {
     if(!state.open)return;const map=S().map;
     if(state.view==='baseline'||!state.result)S().setRiskDisplay(saved.opacity,saved.visible);
-    else S().setRiskDisplay(state.view==='change'?.22:saved.opacity,true);
+    else S().setRiskDisplay(saved.opacity,state.view!=='change');
+    const showArea=!state.result||state.view==='baseline';
+    for(const layer of ['cf-area-fill','cf-area-next-fill'])if(map.getLayer(layer))map.setLayoutProperty(layer,'visibility',showArea&&state.event.area?'visible':'none');
+    for(const symbol of stormSymbols)symbol.marker.getElement().style.visibility=showArea?'visible':'hidden';
     if(!map.getLayer('cf-result-fill'))return;
     map.setLayoutProperty('cf-result-fill','visibility',state.result&&state.view!=='baseline'?'visible':'none');
     const span=Math.max(.00001,state.result?.span||0);
@@ -216,7 +222,7 @@
       geoKey=key;S().map.getSource('cf-result').setData(fc(features));}paint();}
   function renderResult(){if(!state.result)return;output.hidden=false;output.replaceChildren(node('h3','3 · Compare outcomes'));
     const views=node('div','','cf-viewbar');for(const [key,label] of [['baseline','Baseline'],['scenario','Scenario'],['change','Change']]){const b=button(label,()=>setView(key),'cf-view');b.classList.toggle('selected',state.view===key);b.setAttribute('aria-pressed',state.view===key);views.append(b);}output.append(views);
-    const legend=node('div','','cf-legend');legend.append(node('p',state.view==='change'?'Score difference · fixed scale for this run':'Modeled occupancy score'));legend.append(node('div','','cf-legend-bar '+(state.view==='change'?'change':'seq')));const ticks=node('div','','cf-legend-ticks');for(const v of state.view==='change'?[-state.result.span,0,state.result.span]:['Lower','Higher'])ticks.append(node('span',typeof v==='number'?signed(v):v));legend.append(ticks);output.append(legend);
+    const legend=node('div','','cf-legend');legend.append(node('p',state.view==='change'?'Change · blue lower / red higher':'Modeled occupancy score'));legend.append(node('div','','cf-legend-bar '+(state.view==='change'?'change':'seq')));const ticks=node('div','','cf-legend-ticks');for(const v of state.view==='change'?[-state.result.span,0,state.result.span]:['Lower','Higher'])ticks.append(node('span',typeof v==='number'?signed(v):v));legend.append(ticks);output.append(legend);
     const stats=node('div','','cf-stats');state.result.windows.forEach((w,i)=>{const b=button(' ',()=>setWindow(i),'cf-stat');b.setAttribute('aria-pressed',i===state.windowIndex);b.append(node('span','+'+w.leadHours+'h','cf-stat-lead'),node('strong',score(w.summary.scenario),'cf-stat-value'),node('span',signed(w.summary.delta)+' score','cf-stat-sub'));stats.append(b);});output.append(stats);
     const w=state.result.windows[state.windowIndex],s=w.summary;output.append(node('p',`${date(w.targetTime)} · ${s.cells.toLocaleString()} native cells · ${Math.round(s.areaKm2).toLocaleString()} km²`,'cf-result-note'),node('p',`Baseline ${score(s.baseline)} → Scenario ${score(s.scenario)} · ${s.baseline?signed(s.relative*100)+'% relative change':'relative change unavailable'}`,'cf-result-note'));
     const chart=node('div','','cf-chart'),ns='http://www.w3.org/2000/svg',svg=document.createElementNS(ns,'svg');svg.setAttribute('viewBox','0 0 300 110');svg.setAttribute('role','img');svg.setAttribute('aria-label','Baseline and scenario score over available forecast windows');

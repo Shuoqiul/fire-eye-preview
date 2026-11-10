@@ -1,3 +1,5 @@
+> Historical motion implementation. The current fixed-centre version is described in [the cloud-churn handoff](2026-11-10-mechanisms-and-cloud-churn.md).
+
 # Experimental area motion
 
 Branch: `dev`, continuing the advanced-motion implementation on the drawing editor.
