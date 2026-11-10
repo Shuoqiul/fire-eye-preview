@@ -29,14 +29,19 @@
   };
  }
  function weakenTrack(track,vmax,classify=()=>({land:false,distanceKm:Infinity})){
-  let wind=vmax;return track.map((point,i)=>{
+  let wind=vmax,overLand=false;return track.map((point,i)=>{
    if(i){const a=track[i-1];for(let hour=0;hour<12;hour++){
-    const t=(hour+.5)/12,position=[a[0]+(point[0]-a[0])*t,a[1]+(point[1]-a[1])*t],coast=classify(position),rate=coast.land ? .09 : .002+.016*Math.exp(-Math.max(0,coast.distanceKm)/60);
-    wind*=Math.exp(-rate);
+    const t=(hour+.5)/12,position=[a[0]+(point[0]-a[0])*t,a[1]+(point[1]-a[1])*t],coast=classify(position);
+    if(coast.land){
+     const mix=Math.max(0,Math.min(1,(Math.abs(position[1])-36)/4)),background=26.7+2.9*mix,alpha=.095+(.183-.095)*mix;
+     if(wind>background){if(!overLand)wind=Math.max(background,.9*wind);wind=background+(wind-background)*Math.exp(-alpha);}
+    }else wind*=Math.exp(-(.002+.016*Math.exp(-Math.max(0,coast.distanceKm)/60)));
+    overLand=coast.land;
    }}
    return [point[0],point[1],wind];
   });
  }
+
  function apply(event,recipe=groups[event.type][defaultIndex[event.type]],classify){
   const {vmax,...drivers}=recipe[1],next={...event,...drivers,startH:0,durationH:24};
   if(vmax!=null)next.track=weakenTrack(event.track,vmax,classify);

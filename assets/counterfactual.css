@@ -25,6 +25,6 @@
 .cf-brush-tools{position:fixed;z-index:15;bottom:16px;left:50%;transform:translateX(-50%);padding:12px;max-width:calc(100vw - 24px);display:flex;gap:8px;flex-wrap:wrap}.cf-brush-tools p{flex-basis:100%;font-size:11px}.cf-brush-tools button{border:1px solid var(--line);border-radius:5px;padding:8px 12px;background:#f3f7f3}.cf-brush-tools button[aria-pressed=true]{background:var(--green);color:white}.cf-brush-sizes{display:flex;gap:15px;flex-basis:100%}.cf-brush-sizes label{display:flex;gap:5px;align-items:center}.cf-brush-sizes input{width:95px}
 @media(prefers-reduced-motion:reduce){.cf-cyclone-spin{animation:none}}
 
-.cf-weather-marker{background:transparent!important;pointer-events:none;filter:drop-shadow(0 0 .6px #ffffff)}.cf-weather-marker svg{display:block;width:100%;height:100%}.cf-lightning-marker{width:18px;height:23px;color:#c29b00}.cf-rain-marker{width:28px;height:30px;color:#075fa8}
+.cf-weather-marker{background:transparent!important;pointer-events:none;filter:drop-shadow(0 0 .6px #ffffff)}.cf-weather-marker svg{display:block;width:100%;height:100%}.cf-lightning-marker{width:18px;height:23px;color:#6d28a8}.cf-rain-marker{width:28px;height:30px;color:#075fa8}
 
 .cf-width-control{grid-column:1/-1}.cf-width-control input[type="range"]{width:100%;accent-color:#194d3f;min-height:24px}.cf-width-control output{font-size:11px;color:#49645b}
