@@ -54,3 +54,26 @@ The public editor uses complete event recipes and now/24-hour timing. Expert mod
 Current mechanism equations, visual changes and the questions for scientific review are collected in [mechanisms and cloud-churn handoff](docs/changes/2026-11-10-mechanisms-and-cloud-churn.md). Wind width is 20–200 km. Change maps keep event tint separate from score differences.
 
 This `dev` branch uses fixed-centre contour churn and outward fade for area events. Cloud activity changes tempo; the direction control and rigid translation are removed. Production `main` keeps static area rendering.
+
+## Research formulas and private local sample
+
+The scenario comparison reports native hourly FFMC/ISI mechanisms and preserves
+the published fire forecast as a separate reference. Cyclones use a coarse Atlantic
+climatological preset with R-CLIPER rain; lightning discovery is conditional on a
+matched fire. Fuel-treatment outputs identify their required process inputs.
+
+Run `npm run research` for the loopback-only research preview. A prepared private
+sample in the parent workspace's `data/prepared/fire-eye-oct27.json` loads locally;
+`CF_RESEARCH_SAMPLE_PATH` can select its absolute path in a separate worktree.
+`PORT` selects the preview port (default 5199). The ordinary Cloudflare build
+contains the application assets, while collaborator arrays remain outside it.
+The offline JVP exporter and revised scientific report are in the parent project's
+`tools/research_handoff` and `docs/manuscripts` directories.
+
+## Drawing and flow update
+
+Event selection opens drawing immediately. The primary map-pencil action starts
+another sketch. Wind uses curved flow traces with visible turn/compression cues;
+these remain separate from the accepted native prediction formulas. Dev adds a
+stationary, edge-only radar loop, while main retains static event areas.
+[Implementation and checks](docs/2026-11-17-research-and-radar.md).

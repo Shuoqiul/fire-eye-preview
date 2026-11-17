@@ -1,30 +1,37 @@
 'use strict';
-/* Fixed-centre weather churn: six half-second contour keys and a half-second clear pause. */
+/* Stationary radar clouds: a periodic ripple confined to the soft outer edge. */
 (function(root){
- const clamp=(n,a,b)=>Math.max(a,Math.min(b,n));
- const finite=v=>typeof v==='number'&&Number.isFinite(v);
+ const finite=v=>typeof v==='number'&&Number.isFinite(v),frameCount=24;
  function defaults(){return {speed:30};}
  function normalize(m){
   const speed=m&&m.speed;
-  if(!finite(speed)||speed<0||speed>100)throw Error('Motion speed must be a number from 0 to 100.');
+  if(!finite(speed)||speed<0||speed>100)throw Error('Cloud activity must be a number from 0 to 100.');
   return {speed};
  }
+ function cycleMs(m){const {speed}=normalize(m);return speed?12000/(.4+speed/50):Infinity;}
  function frame(m,elapsed){
   const {speed}=normalize(m);
   if(!speed)return {key:0,next:0,mix:0,opacity:1,paused:true,position:0,dx:0,dy:0};
-  const time=(finite(elapsed)?elapsed:0)*(.4+speed/50),cycle=((time%3000)+3000)%3000,active=cycle<2500,position=active?Math.min(4.999,cycle/500):5,key=Math.min(5,Math.floor(position)),next=key===5?5:key+1,fraction=position-key,mix=key===5?0:fraction*fraction*(3-2*fraction);
-  return {key,next,mix,opacity:active?1-position/5:0,paused:!active,position,dx:0,dy:0};
- }
- function noise(x,y,key){
-  if(!x&&!y)return 0;
-  const angle=Math.atan2(y,x),turn=key*.42;
-  return .48*Math.sin(5*Math.cos(angle)+3*Math.sin(angle)+turn)+.32*Math.sin(9*Math.cos(angle)-4*Math.sin(angle)-turn*1.3+1.3)+.20*Math.sin(13*Math.cos(angle)+8*Math.sin(angle)+turn*.7);
+  const period=cycleMs(m),time=finite(elapsed)?elapsed:0,position=(((time%period)+period)%period)/period*frameCount,key=Math.min(frameCount-1,Math.floor(position));
+  return {key,next:(key+1)%frameCount,mix:position-key,opacity:1,paused:false,position,dx:0,dy:0};
  }
  function contour(signedDistance,x,y,key,maxDistance){
-  if(![signedDistance,x,y,key,maxDistance].every(finite)||maxDistance<=0)throw Error('Contour needs finite coordinates, key and positive maxDistance.');
-  if(key<=0)return signedDistance;
-  const progress=key/5,edge=clamp(1-signedDistance/maxDistance,0,1),offset=maxDistance*edge*(.22*progress+.10*noise(x,y,key)*Math.sin(Math.PI*progress));
-  return signedDistance+offset;
+  if(![signedDistance,x,y,key,maxDistance].every(finite)||maxDistance<=0)throw Error('Contour needs finite coordinates, phase and a positive maximum distance.');
+  const band=Math.min(2.5,maxDistance*.28),ratio=signedDistance/band;
+  if(Math.abs(ratio)>=1)return signedDistance;
+  const phase=2*Math.PI*(((key%frameCount)+frameCount)%frameCount)/frameCount;
+  const noise=.6*Math.sin(.19*x+.13*y+phase)+.27*Math.sin(.11*x-.21*y-phase)+.13*Math.sin(.08*x+.17*y+2*phase+1.2);
+  const amplitude=Math.min(.8,band*.32),envelope=(1-ratio*ratio)**2;
+  return signedDistance+amplitude*envelope*noise;
  }
- const api={defaults,normalize,frame,contour};if(typeof module==='object'&&module.exports)module.exports=api;else root.FireMotion=api;
+ // Premultiplied interpolation keeps identical interior RGBA values exact.
+ function blendPixels(a,b,mix,out){
+  if(a.length!==b.length||a.length!==out.length||a.length%4||!finite(mix)||mix<0||mix>1)throw Error('Pixel buffers and mix must match.');
+  if(mix===0){out.set(a);return out;}if(mix===1){out.set(b);return out;}
+  for(let i=0;i<a.length;i+=4){
+   const aa=a[i+3]*(1-mix),bb=b[i+3]*mix,alpha=aa+bb;out[i+3]=Math.round(alpha);
+   for(let j=0;j<3;j++)out[i+j]=alpha?Math.round((a[i+j]*aa+b[i+j]*bb)/alpha):0;
+  }return out;
+ }
+ const api={defaults,normalize,frame,contour,frameCount,cycleMs,blendPixels};if(typeof module==='object'&&module.exports)module.exports=api;else root.FireMotion=api;
 })(typeof window==='undefined'?globalThis:window);

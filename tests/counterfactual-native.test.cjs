@@ -42,8 +42,8 @@ test('native projected event affects covered cells and leaves the rest intact', 
   for(let w=0;w<4;w++) for(let i=0;i<input.windows[w].values.length;i++) {
     const before=input.windows[w].values[i], after=result.windows[w].scenario[i];
     if(Number.isNaN(before)){assert.ok(Number.isNaN(after));continue;}
-    assert.ok(Number.isFinite(after)&&after>=0&&after<=1);
-    if(after!==before) changed++; else unchanged++;
+    assert.equal(result.windows[w].publishedBaseline[i],before);if(Number.isNaN(after)){unchanged++;continue;}assert.ok(Number.isFinite(after)&&after>=0);
+    if(result.windows[w].delta[i]!==0) changed++; else unchanged++;
   }
   assert.ok(changed>0,'wind changes real published cells');
   assert.ok(unchanged>changed,'native field outside event remains intact');

@@ -1,20 +1,36 @@
 const test=require('node:test'),assert=require('node:assert/strict'),motion=require('../assets/counterfactual-motion.js'),model=require('../assets/counterfactual-engine.js');
-test('weather churn is anchored in place at every time and activity level',()=>{for(const speed of [0,1,30,100])for(let t=-5000;t<6500;t+=17){const f=motion.frame({speed},t),sample=motion.frame({speed,direction:45},t);assert.equal(f.dx,0);assert.equal(f.dy,0);assert.deepEqual(f,sample);}});
-test('default loop fades in milliseconds, holds transparent key five and resets exactly',()=>{const m={speed:30};assert.deepEqual(motion.defaults(),{speed:30});for(let i=0;i<5;i++){const f=motion.frame(m,i*500);assert.equal(f.key,i);assert.equal(f.next,i+1);assert.equal(f.paused,false);assert.equal(f.opacity,1-i/5);assert.equal(f.mix,0);}const held=motion.frame(m,2500);assert.deepEqual([held.key,held.next,held.mix],[5,5,0]);assert.equal(held.opacity,0);assert.equal(held.paused,true);assert.deepEqual(motion.frame(m,2999),held);assert.deepEqual(motion.frame(m,3000),motion.frame(m,0));assert.ok(motion.frame(m,1250).mix>.4&&motion.frame(m,1250).mix<.6);assert.ok(Math.abs(motion.frame(m,1250).opacity-.5)<1e-9);});
-test('speed zero is a visible static initial frame and activity controls tempo',()=>{const still=motion.frame({speed:0},1500);assert.deepEqual(still,{key:0,next:0,mix:0,opacity:1,paused:true,position:0,dx:0,dy:0});assert.deepEqual(motion.frame({speed:0},5000),still);assert.equal(motion.frame({speed:30},500).key,1);assert.equal(motion.frame({speed:1},1250).key,1);const fast=motion.frame({speed:90},400),fastDefault=motion.frame(motion.defaults(),880);assert.deepEqual([fast.key,fast.next,fast.opacity],[fastDefault.key,fastDefault.next,fastDefault.opacity]);assert.ok(Math.abs(fast.position-fastDefault.position)<1e-9);assert.notDeepEqual(motion.frame({speed:90},400),motion.frame({speed:5},400));for(const bad of [undefined,{}, {speed:-1},{speed:101},{speed:NaN},{speed:'30'}])assert.throws(()=>motion.normalize(bad));});
-test('contour keeps its centre, frame zero and larger positive interior distances unchanged',()=>{const max=10,points=[[0,0],[1,3],[-2,4],[5,-1]];for(const [x,y] of points){assert.equal(motion.contour(12,x,y,0,max),12);assert.equal(motion.contour(max,x,y,3,max),max);for(let key=1;key<6;key++)assert.equal(motion.contour(max,x,y,key,max),max);}});
-test('contour perturbation is spatial, key-dependent and bounded with an outward exterior',()=>{const max=10,grid=[];for(let key=1;key<6;key++){const values=new Set;for(let y=-18;y<=18;y+=2)for(let x=-18;x<=18;x+=2){const s=max*Math.hypot(x,y)/22,offset=motion.contour(s,x,y,key,max)-s;values.add(offset.toFixed(8));assert.ok(Math.abs(offset)<=max*.32+1e-9);grid.push({s,x,y,key,value:motion.contour(s,x,y,key,max)});}assert.ok(values.size>10);}
- const outward=(x,y,key)=>{const s=max*Math.hypot(x,y)/22;return {s,value:motion.contour(s,x,y,key,max)};};
- for(let key=1;key<6;key++)assert.equal(motion.contour(max,0,0,key,max),max);
- assert.ok(motion.contour(5,5,0,.5,max)-5>=0);
- assert.ok(grid.some(p=>p.s>max&&p.s<max*1.1&&p.value>max+1e-9));
- assert.ok(grid.some(p=>p.value>p.s+1e-9));
- const samples=[[-20,0],[20,0],[0,-20],[0,20]].map(([x,y])=>outward(x,y,3));
- assert.ok(samples.some(p=>p.value>p.s+1e-9));
- const ring=(key,radius=12)=>Array.from({length:64},(_,i)=>{const a=i*Math.PI/32,x=radius*Math.cos(a),y=radius*Math.sin(a);return motion.contour(5,x,y,key,10);});
- for(let k=1;k<5;k++)assert.ok(Math.max(...ring(k))-Math.min(...ring(k))>=.25);
- assert.equal(new Set(ring(5)).size,1);
- assert.ok(ring(5)[0]-5>=.08);
- assert.notEqual(motion.contour(max*Math.hypot(6,4)/22,6,4,2,max),motion.contour(max*Math.hypot(6,4)/22,6,4,4,max));assert.notEqual(motion.contour(max*Math.hypot(6,4)/22,6,4,2,max),motion.contour(max*Math.hypot(6,4)/22,-6,4,2,max));
+test('radar clouds stay visible and anchored at every time and activity level',()=>{
+ for(const speed of [0,1,30,100])for(let t=-30000;t<30000;t+=79){const f=motion.frame({speed},t);assert.equal(f.dx,0);assert.equal(f.dy,0);assert.equal(f.opacity,1);assert.ok(f.key>=0&&f.key<24&&f.next>=0&&f.next<24);assert.ok(f.mix>=0&&f.mix<1);}
 });
-test('painted area events preserve expert timing and cloud activity metadata',()=>{for(const type of ['heavy_rain','thunderstorm','prescribed_burn']){const e=model.defaults(type,[-96,38]);e.startH=24;e.area={width:3,height:3,bounds:[-97,37,-95,39],mask:[0,0,0,0,1,0,0,0,0]};e.motion={direction:135,speed:12};const n=model.normalize(e);assert.equal(n.startH,24);assert.deepEqual(n.motion,{speed:12});}});
+test('24-key loop wraps into its initial texture with continuous boundary displacement',()=>{
+ const m=motion.defaults(),period=motion.cycleMs(m);assert.equal(period,12000);assert.equal(motion.frameCount,24);
+ assert.deepEqual(motion.frame(m,0),motion.frame(m,period));
+ const before=motion.frame(m,period-.01),after=motion.frame(m,.01);assert.equal(before.next,0);assert.equal(after.key,0);
+ const value=f=>(1-f.mix)*motion.contour(0,13,9,f.key,10)+f.mix*motion.contour(0,13,9,f.next,10);
+ assert.ok(Math.abs(value(before)-value(after))<.0001);assert.equal(motion.contour(.2,13,9,0,10),motion.contour(.2,13,9,24,10));
+});
+test('static mode holds the visible initial key; activity adjusts tempo only',()=>{
+ const still=motion.frame({speed:0},8000);assert.deepEqual(still,{key:0,next:0,mix:0,opacity:1,paused:true,position:0,dx:0,dy:0});assert.deepEqual(still,motion.frame({speed:0},100000));
+ assert.ok(motion.cycleMs({speed:100})<motion.cycleMs({speed:1}));
+ for(const bad of [undefined,{}, {speed:-1},{speed:101},{speed:NaN},{speed:'30'}])assert.throws(()=>motion.normalize(bad));
+});
+test('all interior and distant exterior pixels remain exact through every key',()=>{
+ for(const max of [1,4,16,64])for(let key=0;key<=24;key++)for(const [x,y] of [[0,0],[8,5],[-17,22]]){
+  const band=Math.min(2.5,max*.28);
+  for(const d of [band,max,max*2,-band,-max*2])assert.equal(motion.contour(d,x,y,key,max),d);
+ }
+});
+test('only a narrow outer edge ripples with bounded local, cyclic variation',()=>{
+ const values=[];for(let key=0;key<24;key++)for(let x=-30;x<=30;x+=3){const d=motion.contour(0,x,11,key,10);assert.ok(Math.abs(d)<=.8);values.push(d);}
+ assert.ok(Math.max(...values)-Math.min(...values)>.5);assert.ok(new Set(values.map(v=>v.toFixed(5))).size>100);
+ const near=motion.contour(2.49,12,14,3,10);assert.ok(Math.abs(near-2.49)<.001);
+ assert.throws(()=>motion.contour(0,0,0,NaN,10));assert.throws(()=>motion.contour(0,0,0,1,0));
+});
+test('painted events preserve expert timing and cloud activity metadata',()=>{
+ for(const type of ['heavy_rain','thunderstorm','prescribed_burn']){const e=model.defaults(type,[-96,38]);e.startH=24;e.area={width:3,height:3,bounds:[-97,37,-95,39],mask:[0,0,0,0,1,0,0,0,0]};e.motion={direction:135,speed:12};const n=model.normalize(e);assert.equal(n.startH,24);assert.deepEqual(n.motion,{speed:12});}
+});
+test('pixel interpolation holds static interiors exactly and preserves soft alpha edges',()=>{
+ const a=Uint8ClampedArray.from([13,65,156,120,13,65,156,0,0,0,0,0]),b=Uint8ClampedArray.from([13,65,156,120,13,65,156,40,13,65,156,80]),out=new Uint8ClampedArray(a.length);
+ for(const mix of [0,.01,.25,.5,.75,.99,1]){motion.blendPixels(a,b,mix,out);assert.deepEqual([...out.slice(0,4)],[13,65,156,120]);}
+ motion.blendPixels(a,b,.5,out);assert.deepEqual([...out.slice(4,8)],[13,65,156,20]);assert.deepEqual([...out.slice(8,12)],[13,65,156,40]);
+});
