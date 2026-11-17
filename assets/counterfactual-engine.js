@@ -1,9 +1,5 @@
 'use strict';
-/*
- * Deterministic counterfactual rules on Fire Eye's published score field.
- * The score is mapped through a logit only as an illustrative arithmetic proxy:
- * scenario values are uncalibrated modeled occupancy, not probabilities.
- */
+/* Native-unit hourly process diagnostics; published model references stay immutable. */
 (function (root) {
   const science=typeof module==='object'&&module.exports?require('./counterfactual-methods.js'):root.FireMethods;
   const TYPES = ['hurricane', 'thunderstorm', 'high_wind', 'heavy_rain', 'prescribed_burn'];
@@ -21,39 +17,17 @@
     treatedFraction: [0, 1],
     ageYears: [0, 100]
   };
-  const P = Object.freeze({
-    windRefMph: 10,
-    windCoupling: science.defaults.windCoupling,
-    footprintThreshold: 0.3,
-    receptiveGate: [0.08, 0.5],
-    windEllipseFactor: 0.5,
-    rainCoupling: science.defaults.rainCoupling,
-    initialMoisturePercent: science.defaults.initialMoisturePercent,
-    rainTauHours: science.defaults.rainTauHours,
-    rainWeights: science.defaults.rainWeights,
-    lightningLag: Object.freeze(science.lightningKernel()),
-    lightningHazard: science.defaults.lightningHazard,
-    coverageRef: 0.2,
-    wettingIn: .5/25.4,
-    rxLogOddsShift: science.defaults.rxLogOddsShift,
-    rxHalfLifeYears: science.defaults.rxHalfLifeYears
-  });
+  const P = Object.freeze({footprintThreshold:0.001,windEllipseFactor:0.5,initialFFMC:85});
   const METADATA = Object.freeze({
-    proxy: 'Published-score wind/moisture log-odds modulation, separate lightning union and treated/untreated mixture. These arithmetic proxies do not recover raw model logits or constitute a calibrated probability model.',
-    outputs: 'Scenario scores are uncalibrated; no probability, forecast skill, causal-effect, confidence or Monte Carlo claim is made.',
-    drivers: 'Only one published field is available. Published score is an occupancy response gate, not a measured fuel-moisture field. The 10 mph reference, 16% initial moisture, mixture weights and response couplings are explicit scenario assumptions; raw logits, model derivatives, fuel classes and meteorology are unavailable.',
-    footprint: 'The union of all forecast-window influence footprints is selected above the prototype threshold 0.3. Every window summary and area uses that same finite footprint and baseline window.',
-    rain: 'Rain total is conserved over exact active hours. FFMC wetting uses a 0.5 mm interception and the >150% correction, then f(F) gives the moisture ratio. Recovery uses 1/10/100-hour exponential components; weights, initial moisture and occupancy coupling are uncalibrated, not a full daily/hourly FWI weather run.',
-    time: 'Moisture starts at issue time and evolves causally in 12-hour steps, including intermediate unpublished windows. Color span is fixed across the run; summaries use each window nodata mask over a shared spatial footprint.',
-    hurricaneFields: 'Local Rankine wind uses per-segment heading/translation speed. Rain and convection use a separate moving radial band with the scenario radius, not a fitted R-CLIPER rainfall model. Sub-34kt spatial support is a prototype radial fallback, since no 34kt envelope exists.',
-    hurricaneDecay: 'Track points are 12-hour positions; validHours places the first point on the forecast clock. Landfall decay activates only when optional event.landfallHours is supplied by the caller from its land source. Decay applies to storm strength, without an independent land test. Without landfallHours, no land classification is derived from the published score.',
-    burn: 'Burn mixes treated and untreated subareas, using treatedFraction * footprint * 0.5^(ageYears/8). The treated log-odds shift and 8-year half-life are prototype assumptions, not a conversion of severity reduction to occupancy or a derivative-calibrated fuel replacement.',
-    lightning: 'A normalized prompt/holdover delay kernel feeds a Poisson hazard and independent-source union. Coverage-to-exposure, field survival/detection and regional timing remain uncalibrated; laboratory ignition probabilities are not used as observed-fire probabilities.',
-    evidence: 'Literature mechanisms plus uncalibrated published-score bridge. No derivative-informed or causal calibration is claimed.',
-    omitted: 'Downwind spillover, cf-app regional land masking, simulation bands and derived hurricane landfall detection are not applied. The response is deterministic.',
-    cells: 'Area is nominal transform cell area (proj4 is not used for area) multiplied by the count of cells finite in the displayed window inside the shared footprint.',
-    geometry: 'Each forecast window supplies its own nodata mask. Native affine cell centres are transformed with GDAL coefficients a,b,c,d,e,f; no projection inverse or affine approximation of the Albers grid is assumed.',
-    scope: 'The event footprint limits the native cells that receive a response, while summaries use the shared footprint with each window\'s own nodata mask.'
+    endpoint:'Initial spread index (ISI)',unit:'ISI',version:'20261117-research',
+    evidence:'Published hourly FFMC/ISI mechanisms; source-specific storm fields; conditional discovery fit.',
+    rain:'Hourly positive-rain wetting followed by temperature/RH/wind-driven state recovery.',
+    hurricaneFields:'Coarse North Atlantic climatological wind preset, one field for wind and radii; NHC R-CLIPER rainfall at 35–150 kt.',
+    lightning:'Discovery timing is conditional on an already matched reported fire. Exposure-conditioned ignition requires the corresponding model.',
+    burn:'Treatment response uses supplied paired fuel-process outcomes. Treatment type and recovery rules are required.',
+    outputs:'Native mechanism diagnostics and immutable raw/published model references have separate endpoints.',
+    geometry:'Affine cell centres and spatial support use the native grid and supplied projection.',
+    initialization:'FFMC=85 is a conditional initial state; snapshot weather persistence and zero background rain are explicit assumptions.'
   });
 
   function finite(v) {
@@ -87,13 +61,6 @@
   function smoothstep(a, b, x) {
     const t = clamp((x - a) / (b - a), 0, 1);
     return t * t * (3 - 2 * t);
-  }
-  function sigmoid(x) {
-    return x < -30 ? 0 : x > 30 ? 1 : 1 / (1 + Math.exp(-x));
-  }
-  function logit(s) {
-    // Preserve exactly zero and one. Finite saturated logits avoid Infinity.
-    return s <= 0 ? -30 : s >= 1 ? 30 : Math.max(-30, Math.min(30, Math.log(s / (1 - s))));
   }
   function moveKm(c, bearing, km) {
     const lat1 = c[1] * Math.PI / 180;
@@ -276,32 +243,14 @@
     }
     return d;
   }
-  function vortex(vmax, lat, speed = 0) {
-    const phi = lat - 25;
-    return {
-      rm: Math.max(20, 36.1 - 0.0492 * vmax + 0.574 * phi),
-      x: clamp(0.1147 + 0.0055 * vmax - 0.001 * phi, 0.05, 1),
-      a: Math.max(0, 0.63 - 0.01 * speed + 0.0006 * speed * speed - 0.03 * phi),
-      theta0: 15 - 0.55 * phi + 1.02 * speed
-    };
+  const radiusCache=new Map();
+  function tcRadius(vmax,lat,threshold,theta,speed=12) {
+    if(vmax<=0||threshold>vmax)return 0;
+    const key=[vmax,lat,threshold,theta,speed].join(':');if(radiusCache.has(key))return radiusCache.get(key);
+    const value=science.cycloneRadius(vmax,lat,threshold,theta,speed);if(radiusCache.size>2048)radiusCache.clear();radiusCache.set(key,value);return value;
   }
-  function tcScale(vmax, threshold) {
-    const over = Math.max(0, vmax - 94);
-    if (threshold === 34) return 1 + 0.0025 * over;
-    if (threshold === 64) return (1 - 0.0025 * over) * 0.94;
-    return 1;
-  }
-  // Port of quadrantRadiusAsym: theta is counter-clockwise from storm-motion-right.
-  function tcRadius(vmax, lat, threshold, theta, speed = 12) {
-    const p = vortex(vmax, lat, speed);
-    const asym = p.a * Math.cos((theta - p.theta0) * Math.PI / 180);
-    const rhs = threshold - asym;
-    if (vmax - p.a + asym <= threshold || rhs <= 0) return 0;
-    return p.rm * Math.pow((vmax - p.a) / rhs, 1 / p.x) * tcScale(vmax, threshold) * NMI_TO_KM;
-  }
-  function tcWind(vmax,lat,distanceKm,theta,speed=12){
-    const p=vortex(vmax,lat,speed),r=Math.max(0,distanceKm)/NMI_TO_KM,radial=r<p.rm?r/p.rm:Math.pow(p.rm/Math.max(r,1e-9),p.x);
-    return clamp((vmax-p.a)*radial+p.a*Math.cos((theta-p.theta0)*Math.PI/180),0,vmax);
+  function tcWind(vmax,lat,distanceKm,theta,speed=12) {
+    return vmax<=0?0:science.cycloneWind(vmax,lat,distanceKm,theta,speed);
   }
   function stormMotion(e,leadHours){
     const index=clamp(Math.floor((leadHours-(e.validHours||0))/12),0,e.track.length-2),a=e.track[index],b=e.track[index+1],mean=(a[1]+b[1])/2;
@@ -381,8 +330,8 @@
     };
   }
   function timeProfile(e,leadHours){return activeHours(e,leadHours)/12;}
-  function windDriver(mph) {
-    return P.windCoupling*Math.max(0,science.windLogRatio(mph,P.windRefMph));
+  function windDriver(mph,referenceMph=10) {
+    return science.windLogRatio(mph*1.609344,referenceMph*1.609344);
   }
   function activeHours(e,leadHours){return Math.max(0,Math.min(leadHours,e.startH+e.durationH)-Math.max(leadHours-12,e.startH));}
   function footprintAt(e, leadHours, point) {
@@ -390,7 +339,7 @@
     if(e.type==='high_wind'&&e.windPath){
       let nearest=Infinity;const k=kmPerLon(point[1]);
       for(let i=1;i<e.windPath.length;i++){const a=e.windPath[i-1],b=e.windPath[i],ax=(a[0]-point[0])*k,ay=(a[1]-point[1])*KM_PER_DEG_LAT,dx=(b[0]-a[0])*k,dy=(b[1]-a[1])*KM_PER_DEG_LAT,t=clamp(-(ax*dx+ay*dy)/(dx*dx+dy*dy||1),0,1);nearest=Math.min(nearest,Math.hypot(ax+t*dx,ay+t*dy));}
-      return Math.exp(-Math.pow(nearest/(e.radiusKm*.6),2));
+      return Math.exp(-Math.LN2*Math.pow(nearest/e.radiusKm,2));
     }
     if (e.type === 'prescribed_burn') {
       if (!Number.isFinite(leadHours)) return 0;
@@ -502,8 +451,9 @@
   }
   function run(input) {
     const {grid:g, windows:wins, event:e, project} = checkInput(input);
+    if(input.context?.issueTimeUtc){for(const w of wins)if(Date.parse(w.targetTime)-Date.parse(input.context.issueTimeUtc)!==w.leadHours*3600000||w.leadHours!==input.context.leadHours)throw Error('Research sample and prediction window must share the same forecast clock.');const cg=input.context.grid;if(cg&&(cg.width!==g.width||cg.height!==g.height||JSON.stringify(cg.transform)!==JSON.stringify(g.transform)))throw Error('Research weather and prediction must share the native grid.');}
     const n=g.width*g.height, area=Math.abs(g.transform[0]*g.transform[4]-g.transform[1]*g.transform[3])/1e6;
-    const out=wins.map(w=>({leadHours:w.leadHours,targetTime:w.targetTime,baseline:new Float32Array(w.values),scenario:new Float32Array(w.values),delta:Float32Array.from(w.values,v=>Number.isNaN(v)?NaN:0),summary:{}}));
+    const out=wins.map(w=>({leadHours:w.leadHours,targetTime:w.targetTime,publishedBaseline:new Float32Array(w.values),baseline:e?new Float32Array(n).fill(NaN):new Float32Array(w.values),scenario:e?new Float32Array(n).fill(NaN):new Float32Array(w.values),delta:e?new Float32Array(n).fill(NaN):Float32Array.from(w.values,v=>Number.isNaN(v)?NaN:0),summary:{}}));
     const selected=[];
     if (!e) {
       for(let i=0;i<n;i++) if(wins.some(w=>Number.isFinite(w.values[i]))) selected.push({i});
@@ -516,61 +466,89 @@
         if(!validPoint(p)) throw Error('Project must return valid [lon,lat] points.');
         if(!pointInRegion(p[0],p[1],region)) continue;
         let f=0;
-        for(let h=12;h<=Math.max(...wins.map(w=>w.leadHours));h+=12) f=Math.max(f,footprintAt(e,h,p));
+        if(e.type!=='hurricane')f=footprintAt(e,0,p);else for(let h=0;h<=Math.max(...wins.map(w=>w.leadHours));h++)f=Math.max(f,footprintAt(e,h,p));
         if(e.area?f>0:f>=P.footprintThreshold) selected.push({i,p});
       }
     }
     const maxLead=Math.max(...wins.map(w=>w.leadHours));
-    for(const c of selected) {
-      if(!e) continue;
-      let cumulativeRain=0,wetTarget=P.initialMoisturePercent;const memory=P.rainTauHours.map(()=>0),exposures=[];
-      for(let h=12;h<=maxLead;h+=12) {
-        const f=footprintAt(e,h,c.p),rainF=e.type==='hurricane'?convectiveFootprint(e,h,c.p):f,hours=activeHours(e,h),fraction=hours/12;
-        const rain=hasRain(e)?e.rainIn*25.4*rainF*hours/e.durationH:0;
-        cumulativeRain+=rain;const target=science.rainMoisture(P.initialMoisturePercent,cumulativeRain),increase=Math.max(0,target-wetTarget);wetTarget=target;
-        const lagHours=Math.max(0,h-Math.min(h,e.startH+e.durationH));
-        for(let j=0;j<memory.length;j++)memory[j]=science.memoryStep(memory[j],increase,P.rainTauHours[j],hours,lagHours);
-        const moisture=P.initialMoisturePercent+memory.reduce((sum,value,j)=>sum+value*P.rainWeights[j],0),fuelRatio=Math.min(1,science.fineFuelFactor(moisture)/science.fineFuelFactor(P.initialMoisturePercent));
-        exposures.push(rainF*fraction*(e.coverage/P.coverageRef)*fuelRatio);
-        const w=wins.findIndex(w=>w.leadHours===h);if(w<0)continue;
-        const base=wins[w].values[c.i];if(!Number.isFinite(base))continue;
-        const gate=smoothstep(...P.receptiveGate,base);let dl=0;
-        if(e.type==='high_wind'||e.type==='hurricane'){
-          const wind=e.type==='hurricane'?localHurricaneWind(e,h,c.p):e.windMph*f;
-          if(Number.isFinite(wind))dl+=windDriver(wind)*fraction*gate;
+    const context=input.context||null,weatherAt=input.weatherAt||context?.weatherAt||(()=>({tempC:25,rhPct:30,uMs:10/3.6,vMs:0,rainMm:0,initialFFMC:85}));
+    const available=!e||e.type!=='prescribed_burn';
+    const forcing=context?'snapshot-held':'reference-weather';
+    let rainDomainHours=0;
+    if(e&&available)for(const cell of selected) {
+      const first=weatherAt(cell.i,0);if(!first)continue;
+      let baseFFMC=first.initialFFMC??85,scenarioFFMC=baseFFMC,totalRain=0;
+      const target=e.type==='high_wind'?windTarget(e,cell.p):null;
+      for(let h=1;h<=maxLead;h++) {
+        const weather=weatherAt(cell.i,h);if(!weather)break;
+        const {tempC,rhPct,uMs,vMs}=weather;
+        if(![tempC,rhPct,uMs,vMs].every(finite)||rhPct<0||rhPct>100)throw Error('Hourly weather needs finite °C, RH %, and east/north m/s.');
+        const backgroundRain=weather.rainMm??0;if(!finite(backgroundRain)||backgroundRain<0)throw Error('Hourly background rain must be nonnegative mm.');
+        const active=Math.max(0,Math.min(h,e.startH+e.durationH)-Math.max(h-1,e.startH));
+        const weight=footprintAt(e,h-.5,cell.p),blend=clamp(weight*active,0,1);
+        let u=uMs,v=vMs,rain=backgroundRain;
+        if(e.type==='high_wind'){
+          const speed=e.windMph*.44704;[u,v]=science.blendWindVectors(uMs,vMs,speed*target[0],speed*target[1],blend);
+        }else if(e.type==='hurricane'&&active>0){
+          const center=trackCenter(e,h-.5);
+          if(!center.offTrack){
+            const dx=(cell.p[0]-center.lon)*kmPerLon(center.lat),dy=(cell.p[1]-center.lat)*KM_PER_DEG_LAT,r=Math.hypot(dx,dy);
+            const speed=localHurricaneWind(e,h-.5,cell.p)*.44704;
+            const tx=r>0?-dy/r:0,ty=r>0?dx/r:0;
+            [u,v]=science.blendWindVectors(uMs,vMs,speed*tx,speed*ty,blend);
+            if(e.rainIn>0){
+              if(center.vmax>=35&&center.vmax<=150)rain+=science.rcliperRainRate(center.vmax,r)*active;
+              else rainDomainHours++;
+            }
+          }
         }
-        if(hasRain(e))dl+=P.rainCoupling*Math.log(Math.max(1e-12,fuelRatio));
-        let after=dl===0||base===0||base===1?base:clamp(sigmoid(logit(base)+dl),0,1);
-        if(e.type==='thunderstorm'||e.type==='hurricane'){
-          const delayed=P.lightningLag.reduce((sum,weight,j)=>sum+weight*(exposures[exposures.length-1-j]||0),0);
-          // Field ignition efficiency is a declared prototype, not laboratory per-discharge ignition.
-          after=science.ignitionUnion(after,P.lightningHazard*delayed);
-        }
-        if(e.type==='prescribed_burn'&&h>e.startH){
-          const treated=base===0||base===1?base:sigmoid(logit(base)+P.rxLogOddsShift),treatedFraction=e.treatedFraction*Math.pow(.5,e.ageYears/P.rxHalfLifeYears)*(e.area?f:(inside(e.polygon,...c.p)?1:0));
-          after=science.treatmentMixture(base,treated,treatedFraction);
-        }
-        out[w].scenario[c.i]=after;
-        out[w].delta[c.i]=out[w].scenario[c.i]-base;
+        if((e.type==='heavy_rain'||e.type==='thunderstorm')&&active>0)rain+=e.rainIn*25.4*weight*active/e.durationH;
+        baseFFMC=science.hourlyFFMC(baseFFMC,tempC,rhPct,Math.hypot(uMs,vMs)*3.6,backgroundRain,1);
+        scenarioFFMC=science.hourlyFFMC(scenarioFFMC,tempC,rhPct,Math.hypot(u,v)*3.6,rain,1);
+        totalRain+=rain;
+        const index=wins.findIndex(w=>w.leadHours===h);if(index<0||!finite(wins[index].values[cell.i]))continue;
+        const b=science.initialSpreadIndex(baseFFMC,Math.hypot(uMs,vMs)*3.6,false),a=science.initialSpreadIndex(scenarioFFMC,Math.hypot(u,v)*3.6,false);
+        out[index].baseline[cell.i]=b;out[index].scenario[cell.i]=a;out[index].delta[cell.i]=a-b;
       }
     }
-    let span=0;
+    let span=0,maximum=0;
     for(const w of out) {
-      let b=0,q=0,count=0;
-      for(const {i} of selected) if(Number.isFinite(w.baseline[i])) {b+=w.baseline[i];q+=w.scenario[i];count++;span=Math.max(span,Math.abs(w.delta[i]));}
-      b=count?b/count:0;q=count?q/count:0;
-      w.summary={baseline:b,scenario:q,delta:q-b,relative:b?(q-b)/b:0,cells:count,areaKm2:count*area};
+      let baseline=0,scenario=0,count=0,published=0,raw=0;
+      for(const {i} of selected){
+        const b=w.baseline[i],a=w.scenario[i];
+        if(finite(b)&&finite(a)){baseline+=b;scenario+=a;count++;maximum=Math.max(maximum,b,a);span=Math.max(span,Math.abs(w.delta[i]));}
+        if(finite(w.publishedBaseline[i]))published+=w.publishedBaseline[i];
+        if(finite(context?.fields?.rawBaseline?.[i]))raw+=context.fields.rawBaseline[i];
+      }
+      w.summary={baseline:count?baseline/count:NaN,scenario:count?scenario/count:NaN,delta:count?(scenario-baseline)/count:NaN,
+        relative:baseline?(scenario-baseline)/baseline:null,cells:count,areaKm2:count*area,publishedReference:selected.length?published/selected.length:NaN,
+        rawReference:context?.fields&&selected.length?raw/selected.length:null};
     }
-    for(const w of out) w.span=span;
-    return {windows:out,span,metadata:METADATA,footprint:{cells:selected.length,areaKm2:selected.length*area}};
+    for(const w of out)w.span=span;
+    const discovery=e&&(e.type==='thunderstorm'||e.type==='hurricane')?{dailyWeights:science.dailyDiscoveryKernel(),
+      halfDay:science.halfDayDiscoveryKernel(),holdoverAtScenarioDailyRain:science.holdoverProbability(e.rainIn*25.4*Math.min(24,e.durationH)/e.durationH),
+      estimand:'Discovery lag conditional on a matched reported fire',assumption:'Scenario daily rain sensitivity; a full exposure model supplies ignition probability.'}:null;
+    return {windows:out,span,maximum,available,endpoint:e?'initial_spread_index':'published_reference',unit:e?'ISI':'score',
+      reason:available?null:'Fuel-state treatment rules and a paired spread model are required for a treatment prediction.',
+      forcing,assumptions:context?.assumptions||{initialFFMC:85,weather:'Reference 25 °C, RH 30%, 10 km/h, zero background rain'},
+      discovery,rainDomainHours,cycloneWindAssumption:e?.type==='hurricane'?'Conditional 1-min peak-wind stress forcing; an interval-mean conversion requires calibration.':null,
+      metadata:METADATA,footprint:{cells:selected.length,areaKm2:selected.length*area,indices:Uint32Array.from(selected,c=>c.i)}};
   }
-
-  function pointInRegion(lon, lat, region) {
-    return lon >= region.x0 && lon <= region.x1 && lat >= region.y0 && lat <= region.y1;
+  function windTarget(e,point){
+    if(!e.windPath){const b=(e.windFromDeg+180)*Math.PI/180;return [Math.sin(b),Math.cos(b)];}
+    let sx=0,sy=0,nearest=Infinity,fallback=[1,0];
+    const k=kmPerLon(point[1]);
+    for(let i=1;i<e.windPath.length;i++){
+      const a=e.windPath[i-1],b=e.windPath[i],dx=(b[0]-a[0])*k,dy=(b[1]-a[1])*KM_PER_DEG_LAT,len=Math.hypot(dx,dy);if(!len)continue;
+      const ax=(a[0]-point[0])*k,ay=(a[1]-point[1])*KM_PER_DEG_LAT,t=clamp(-(ax*dx+ay*dy)/(len*len),0,1),d=Math.hypot(ax+t*dx,ay+t*dy),w=Math.exp(-Math.LN2*(d/e.radiusKm)**2);
+      sx+=w*dx/len;sy+=w*dy/len;if(d<nearest){nearest=d;fallback=[dx/len,dy/len];}
+    }
+    const length=Math.hypot(sx,sy);return length>1e-12?[sx/length,sy/length]:fallback;
   }
+  function pointInRegion(lon,lat,region){return lon>=region.x0&&lon<=region.x1&&lat>=region.y0&&lat<=region.y1;}
 
   const api = {
-    version: '20261110-mechanisms-5',
+    version: '20261117-research',
     defaults,
     normalize,
     run,

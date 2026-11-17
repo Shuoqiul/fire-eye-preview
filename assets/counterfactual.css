@@ -28,3 +28,7 @@
 .cf-weather-marker{background:transparent!important;pointer-events:none;filter:drop-shadow(0 0 .6px #ffffff)}.cf-weather-marker svg{display:block;width:100%;height:100%}.cf-lightning-marker{width:18px;height:23px;color:#6d28a8}.cf-rain-marker{width:28px;height:30px;color:#075fa8}
 
 .cf-width-control{grid-column:1/-1}.cf-width-control input[type="range"]{width:100%;accent-color:#194d3f;min-height:24px}.cf-width-control output{font-size:11px;color:#49645b}
+
+/* Drawing is the primary event action, with its map-pencil icon above the label. */
+.cf-draw-action{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:6px;width:100%;min-height:112px;margin-top:15px;padding:13px 12px;border:1px solid #164f40;border-radius:10px;background:#1b5545;color:#fff;box-shadow:0 3px 10px #173d3518;cursor:pointer;text-align:center}
+.cf-draw-action:hover{background:#256b56;border-color:#256b56}.cf-draw-action:focus-visible{outline:3px solid #9dcbb4;outline-offset:3px}.cf-draw-action strong{font-size:13px;font-weight:650}.cf-draw-icon{display:grid;place-items:center;width:42px;height:42px;border-radius:12px;background:#ffffff1c}.cf-draw-icon svg{width:29px;height:29px}.cf-draw-caption{font-size:10px;color:#e1eee7}.cf-brush-tools button:focus-visible{outline:2px solid #598f77;outline-offset:2px}
