@@ -3,11 +3,11 @@
 (function(root){
  const copy=points=>{if(!Array.isArray(points)||points.some(p=>!Array.isArray(p)||p.length<2||!Number.isFinite(p[0])||!Number.isFinite(p[1])))throw Error('Provide finite coordinate pairs.');return points.map(p=>p.slice(0,2));};
  const distance=(a,b)=>Math.hypot(b[0]-a[0],b[1]-a[1]);
- const WIND_LIMIT=1200,WIND_GAP=5;
+ const WIND_LIMIT=1200,WIND_GAP=5,WIND_CLEARANCE=4.5,WIND_BEND_CLEARANCE=8,WIND_HEAD_REACH=3;
  const clamp=(v,lo,hi)=>Math.max(lo,Math.min(hi,v));
  const pointBounds=points=>[Math.min(...points.map(p=>p[0])),Math.min(...points.map(p=>p[1])),Math.max(...points.map(p=>p[0])),Math.max(...points.map(p=>p[1]))];
  const polylineLength=points=>points.reduce((sum,p,i)=>sum+(i?distance(points[i-1],p):0),0);
- const windBoundsMeet=(a,b)=>a[0]<=b[2]+WIND_GAP&&a[2]>=b[0]-WIND_GAP&&a[1]<=b[3]+WIND_GAP&&a[3]>=b[1]-WIND_GAP;
+ const windBoundsMeet=(a,b)=>a[0]<b[2]+WIND_BEND_CLEARANCE+WIND_HEAD_REACH&&a[2]>b[0]-WIND_BEND_CLEARANCE-WIND_HEAD_REACH&&a[1]<b[3]+WIND_BEND_CLEARANCE+WIND_HEAD_REACH&&a[3]>b[1]-WIND_BEND_CLEARANCE-WIND_HEAD_REACH;
  function sample(points,count=6){const p=copy(points);if(!Number.isInteger(count)||count<2||count>512||!p.length)throw Error('Sample count must be 2–512 with at least one point.');if(p.length===1)return Array.from({length:count},()=>[...p[0]]);const arcs=[0];for(let i=1;i<p.length;i++)arcs.push(arcs.at(-1)+distance(p[i-1],p[i]));const out=[];let segment=1;for(let i=0;i<count;i++){const at=arcs.at(-1)*i/(count-1);while(segment<p.length-1&&arcs[segment]<at)segment++;const a=p[segment-1],b=p[segment],span=arcs[segment]-arcs[segment-1],t=span?(at-arcs[segment-1])/span:0;out.push([a[0]+(b[0]-a[0])*t,a[1]+(b[1]-a[1])*t]);}out[0]=[...p[0]];out[count-1]=[...p.at(-1)];return out;}
  function smooth(points,iterations=2){let p=copy(points);if(p.length<3)return p;const simplified=[p[0]];for(let i=1;i<p.length-1;i++)if(distance(p[i],simplified.at(-1))>=2)simplified.push(p[i]);simplified.push(p.at(-1));p=simplified.length>128?sample(simplified,128):simplified;for(let n=0;n<Math.min(3,Math.max(0,iterations));n++){const next=[p[0]];for(let i=1;i<p.length;i++){const a=p[i-1],b=p[i];next.push([a[0]*.75+b[0]*.25,a[1]*.75+b[1]*.25],[a[0]*.25+b[0]*.75,a[1]*.25+b[1]*.75]);}next.push(p.at(-1));p=next.length>512?sample(next,512):next;}return p;}
  function windCenterline(points){
@@ -49,11 +49,26 @@
    return [center[0]+tangent[0]*x*direction+normal[0]*y,center[1]+tangent[1]*x*direction+normal[1]*y];
   });
  }
- function windJump(a,b){
-  for(let i=1;i<a.points.length;i++)for(let j=1;j<b.points.length;j++){
-   const p=a.points[i-1],q=a.points[i],r=b.points[j-1],s=b.points[j],dx=q[0]-p[0],dy=q[1]-p[1],ux=s[0]-r[0],uy=s[1]-r[1],den=dx*uy-dy*ux;
-   if(Math.abs(den)<1e-9)continue;const rx=r[0]-p[0],ry=r[1]-p[1],t=(rx*uy-ry*ux)/den,u=(rx*dy-ry*dx)/den;
-   if(t>0&&t<1&&u>0&&u<1)return true;
+ function windSegmentDistance(p,q,r,s){
+  const dx=q[0]-p[0],dy=q[1]-p[1],ux=s[0]-r[0],uy=s[1]-r[1],rx=r[0]-p[0],ry=r[1]-p[1],den=dx*uy-dy*ux;
+  if(den){const t=(rx*uy-ry*ux)/den,u=(rx*dy-ry*dx)/den;if(t>=0&&t<=1&&u>=0&&u<=1)return 0;}
+  const point=(x,y,a,b)=>{const vx=b[0]-a[0],vy=b[1]-a[1],len=vx*vx+vy*vy,k=len?clamp(((x-a[0])*vx+(y-a[1])*vy)/len,0,1):0;return Math.hypot(x-a[0]-vx*k,y-a[1]-vy*k);};
+  return Math.min(point(p[0],p[1],r,s),point(q[0],q[1],r,s),point(r[0],r[1],p,q),point(s[0],s[1],p,q));
+ }
+ function windJump(a,b,clearance=WIND_CLEARANCE){
+  const n=a.points.length-1,m=b.points.length-1;
+  for(let i=0;i<n;i++){const p=a.points[i],q=a.points[i+1];
+   for(let j=0;j<m;j++){const r=b.points[j],s=b.points[j+1];if(windSegmentDistance(p,q,r,s)<clearance)return true;}
+  }return false;
+ }
+ function windHeadNear(a,b,clearance=WIND_CLEARANCE){
+  const n=a.points.length-1,m=b.points.length-1;
+  if(n<1||m<1)return false;
+  const end=a.points.at(-1),wing=Math.min(6,Math.max(2,polylineLength(a.points)*.23));
+  if(wing<=WIND_HEAD_REACH)return false;
+  const prior=a.points.at(-2),angle=Math.atan2(end[1]-prior[1],end[0]-prior[0]);
+  for(const offset of [-.47,.47]){const at=[end[0]-wing*Math.cos(angle+offset),end[1]-wing*Math.sin(angle+offset)];
+   for(let j=0;j<m;j++){const r=b.points[j],s=b.points[j+1];if(windSegmentDistance(end,at,r,s)<clearance)return true;}
   }return false;
  }
  function clipWindSegment(a,b,viewport,pad){
@@ -76,10 +91,16 @@
      const index=Math.round((station-lead)/pitch),variation=lane===0?1:Math.min(1,(1-.12*Math.abs(offset)/(width/2))*(1+.08*Math.sin(index*.71+lane*1.31))),length=Math.min(line.length-station,Math.max(4,speed)),curve=windPolyline({line,station,length,offset,variation},width),arc=polylineLength(curve);
      if(!Number.isFinite(arc)||arc<2)continue;const box=pointBounds(curve);
      if(viewport&&(box[2]<viewport[0]-100||box[0]>viewport[2]+100||box[3]<viewport[1]-100||box[1]>viewport[3]+100))continue;
-     const keys=cells(box),neighbors=new Set(keys.flatMap(key=>bins.get(key)||[]));let collision=false;
-     for(const other of neighbors){if(!windBoundsMeet(box,other.bounds))continue;if(windJump({points:curve},other)||distance(curve[Math.floor(curve.length/2)],other.points[Math.floor(other.points.length/2)])<5){collision=true;break;}}
+     // Nearby bins include the animated wing space on both sides of a turning shaft.
+     const clearance=Math.max(Math.abs(line.at(station,24).turn),Math.abs(line.at(station+length,24).turn),Math.abs(line.at(station+length/2,24).turn))>.08?WIND_BEND_CLEARANCE:WIND_CLEARANCE,keys=cells(box),reach=WIND_BEND_CLEARANCE+WIND_HEAD_REACH,neighbors=new Set(cells([box[0]-reach,box[1]-reach,box[2]+reach,box[3]+reach]).flatMap(key=>bins.get(key)||[])),current={points:curve};let collision=false;
+     for(const other of neighbors){
+      if(!windBoundsMeet(box,other.bounds))continue;
+      const threshold=Math.max(clearance,other.clearance);
+      if(windJump(current,other,threshold)||distance(curve[Math.floor(curve.length/2)],other.points[Math.floor(other.points.length/2)])<WIND_GAP||
+       windHeadNear(current,other,clearance)||windHeadNear(other,current,clearance)){collision=true;break;}
+     }
      if(collision)continue;
-     const from=curve[0],to=curve.at(-1),arrow={id:'w-'+lane+'-'+index,from,to,points:curve,vector:[to[0]-from[0],to[1]-from[1]],phase:((index*.5001+lane*.137)%1+1)%1,contributors:1,lane:offset,pathLane:offset,laneOffset:offset,station,major:primary,arcLength:arc,glyphLength:arc,speedFactor:arc/length,strength:arc/speed,pathLength:line.length,laneGap:WIND_GAP,direction:1,bounds:box};
+     const from=curve[0],to=curve.at(-1),arrow={id:'w-'+lane+'-'+index,from,to,points:curve,vector:[to[0]-from[0],to[1]-from[1]],phase:((index*.5001+lane*.137)%1+1)%1,contributors:1,lane:offset,pathLane:offset,laneOffset:offset,station,major:primary,arcLength:arc,glyphLength:arc,speedFactor:arc/length,strength:arc/speed,pathLength:line.length,laneGap:WIND_GAP,direction:1,bounds:box,clearance};
      out.push(arrow);laneItems++;for(const key of keys){if(!bins.has(key))bins.set(key,[]);bins.get(key).push(arrow);}
     }
    }

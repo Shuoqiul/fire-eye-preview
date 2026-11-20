@@ -56,6 +56,37 @@ try{
  assert.equal(visible.headless,0,'each drawn shaft carries its arrowhead');
  assert.equal(visible.styles.length,1,'all animated lanes use the same color, opacity and stroke');
  await page.screenshot({path:directory+'/wind-acute-bend.png'});
+ await page.evaluate(()=>fireEyePreview.map.jumpTo({center:[-83.6,32.5],zoom:7}));
+ await page.locator('[data-preset="Damaging"]').click();await draw.click();
+ await page.mouse.move(770,370);await page.mouse.down();for(const p of [[940,537],[1005,625],[1060,525],[1150,290]])await page.mouse.move(...p,{steps:16});await page.mouse.up();
+ await page.getByRole('button',{name:'Confirm',exact:true}).click();
+ await page.emulateMedia({reducedMotion:'reduce'});
+ const clearance=await page.evaluate(async()=>{
+  const ctx=document.getElementById('cf-wind-animation').getContext('2d');
+  const {beginPath,moveTo,lineTo,stroke}=ctx,arrows=[];let points,last;
+  ctx.beginPath=function(){points=[];return beginPath.call(this);};
+  ctx.moveTo=function(x,y){last=[x,y];points.push(last);return moveTo.call(this,x,y);};
+  ctx.lineTo=function(x,y){
+   const n=Math.max(1,Math.ceil(Math.hypot(x-last[0],y-last[1])*2));
+   for(let i=1;i<=n;i++)points.push([last[0]+(x-last[0])*i/n,last[1]+(y-last[1])*i/n]);
+   last=[x,y];return lineTo.call(this,x,y);
+  };
+  ctx.stroke=function(){arrows.push(points);return stroke.call(this);};
+  try{await new Promise(requestAnimationFrame);}finally{Object.assign(ctx,{beginPath,moveTo,lineTo,stroke});}
+  const bins=new Map();let min=8;
+  arrows.forEach((arrow,id)=>arrow.forEach(([x,y])=>{
+   const ix=Math.floor(x/8),iy=Math.floor(y/8);
+   for(let i=ix-1;i<=ix+1;i++)for(let j=iy-1;j<=iy+1;j++)for(const [u,v,k] of bins.get(i+','+j)||[]){
+    if(k!==id)min=Math.min(min,Math.hypot(x-u,y-v));
+   }
+   const key=ix+','+iy;if(!bins.has(key))bins.set(key,[]);bins.get(key).push([x,y,id]);
+  }));
+  return {min,count:arrows.length};
+ });
+ assert.ok(clearance.count>20&&clearance.min>1.7,`full arrowheads and shafts have room at the crowded bend: ${JSON.stringify(clearance)}`);
+ console.log(`Tight bend: ${clearance.count} complete arrows, closest strokes ${clearance.min.toFixed(2)} CSS px apart`);
+ await page.screenshot({path:directory+'/wind-bend-clearance.png'});
+ await page.emulateMedia({reducedMotion:'no-preference'});
  await page.locator('[data-event="heavy_rain"]').click();await page.mouse.move(820,600);await page.mouse.down();await page.mouse.move(1050,660,{steps:15});await page.mouse.move(1010,760,{steps:10});await page.mouse.up();await page.getByRole('button',{name:'Confirm',exact:true}).click();
  assert.ok(await page.evaluate(()=>fireEyeCounterfactual.event.area.mask.some(Boolean)));
  await page.screenshot({path:directory+'/area-desktop.png'});
