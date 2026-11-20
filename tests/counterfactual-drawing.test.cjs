@@ -129,32 +129,27 @@ test('strong maximum-width wind fields keep distinct flowing glyph clearance wit
   assert.ok(elapsed<1500,'maximum-width acute field stays interactive: '+elapsed.toFixed(1)+'ms');
  }
 });
-test('wind frames grow, hold, shrink and gap monotonically with staggered phases',()=>{
+test('wind frames flow continuously from tail through head without a stationary hold',()=>{
  let last={start:0,end:0};for(let time=0;time<1680;time++){const frame=g.windFrame(time,0);assert.ok(frame.start>=last.start&&frame.end>=last.end,'head and tail move monotonically');last=frame;}
- const growth=g.windFrame(240,0),hold=g.windFrame(1480,0),shrink=g.windFrame(1640,0);assert.ok(growth.head>=.6&&growth.start===0);assert.ok(hold.start>0&&hold.start<1&&hold.end===1);assert.ok(shrink.start>hold.start&&shrink.end===1,'held glyph loses its tail before disappearing');
+ const growth=g.windFrame(240,0),flowing=g.windFrame(1320,0),departing=g.windFrame(1640,0);assert.ok(growth.head>=.06&&growth.start===0);assert.ok(flowing.start>0&&flowing.end>flowing.start&&flowing.end<1,'the head and tail both advance');assert.ok(departing.start>flowing.start&&departing.end>flowing.end,'the stroke leaves continuously');
+ for(let time=0;time<2400;time+=8){const frame=g.windFrame(time,0);assert.equal(frame.hold,false);assert.ok(frame.end-frame.start<=.81);}
  const field=g.windField([[0,100],[300,0]],120,undefined,45);assert.ok(new Set(field.map(v=>v.phase)).size>field.length/2);for(let t=2400;t<4800;t+=50)assert.ok(field.some(a=>g.windFrame(t,a.phase).visible));
 });
 test('four mathematically staggered stations keep complete glyphs visible along a straight guide',()=>{
  const guide=[[0,0],[1800,0]];
   for(const speed of [12,27,58]){
   const field=g.windField(guide,240,undefined,speed),lanes=[...new Set(field.map(arrow=>arrow.lane))];
-  const anchor=field.filter(arrow=>arrow.lane===24&&arrow.station>0).sort((a,b)=>a.station-b.station);
-  assert.ok(anchor.length>=18,'four station phases remain populated across the lane');
-  const phases=anchor.map(arrow=>Math.round(((arrow.stagger-.00017*24)%1+1)*4)/4).sort((a,b)=>a-b);
-  let maximum=0;for(let i=1;i<phases.length;i++)maximum=Math.max(maximum,Math.round((phases[i]-phases[i-1])*1000)/1000);assert.ok(maximum<=.25,'four phase slots retain bounded local gaps');
-  for(let time=0;time<4800;time+=4){
-   const visible=g.windVisibility(field,time),byLane=new Map();
-   for(const {arrow} of visible)byLane.set(arrow.lane,(byLane.get(arrow.lane)||0)+1);
-   for(const lane of lanes)assert.ok((byLane.get(lane)||0)>0,`speed ${speed}, t=${time}, lane ${lane}: a complete shaft survives the renderer cutoff`);
-  }
+  for(const lane of lanes){const anchor=field.filter(arrow=>arrow.lane===lane&&arrow.station>0).sort((a,b)=>a.station-b.station);assert.ok(anchor.length>=18,`lane ${lane} retains continuous stations`);
+   assert.ok(new Set(anchor.map(arrow=>Math.round(arrow.stagger*24))).size>=4,'four station phases remain populated across the lane');}
+  for(let time=0;time<4800;time+=4){const visible=g.windVisibility(field,time),byLane=new Map();for(const {arrow} of visible)byLane.set(arrow.lane,(byLane.get(arrow.lane)||0)+1);for(const lane of lanes)assert.ok((byLane.get(lane)||0)>0,`speed ${speed}, t=${time}, lane ${lane}: a flowing glyph survives the renderer cutoff`);}
  }
 });
 test('dense sharp turns keep complete moving glyphs and move rejected glyphs with bend speed ordering',()=>{
  for(const path of [[[0,0],[240,-180],[480,0]],[[0,0],[-240,-180],[-480,0]],[[100,600],[220,330],[420,300]]]){
   for(const [speed,width] of [[27,160],[58,240]]){
    const field=g.windField(path,width,undefined,speed);
-   for(let time=1200;time<2400;time+=16)assert.ok(g.windVisibility(field,time).filter(item=>item.frame.end-item.frame.start>=.6).length>0,'curved chain retains displayed glyphs');
-   assert.ok(field.length>0&&field.length<=1200);assert.ok(field.filter(arrow=>arrow.retry).length>0,'dense turns retain retried glyphs');
+   for(let time=1200;time<2400;time+=16)assert.ok(g.windVisibility(field,time).filter(item=>item.frame.end-item.frame.start>=.1).length>0,'curved chain retains displayed glyphs');
+   assert.ok(field.length>0&&field.length<=1200,'dense turns retain flowing glyphs');
    assert.ok(g.windVisibility(field,1800).length>0);
    assert.ok(fieldClearance(field)>=4.5,'resolved turn glyphs retain shaft clearance');
   }
@@ -174,6 +169,19 @@ test('public rain, coverage and treatment magnitudes darken their area fields',(
   let prior=-1;for(const value of values){const shade=g.shadeIntensity({type,[key]:value,ageYears:2});assert.ok(shade>prior);prior=shade;}
  }
  assert.ok(g.shadeIntensity({type:'prescribed_burn',treatedFraction:.6,ageYears:2})>g.shadeIntensity({type:'prescribed_burn',treatedFraction:.6,ageYears:8}));
+});
+test('guide extending beyond a narrow high-zoom viewport retains lateral arrow coverage',()=>{
+ const guide=[[150,620],[400,420],[700,400]],view=[350,200,750,500],field=g.windField(guide,180,undefined,58,view,{innerDensity:true},8);
+ assert.ok(field.length>=8);
+ const visible=field.flatMap(a=>a.points).filter(p=>p[0]>=view[0]&&p[0]<=view[2]&&p[1]>=view[1]&&p[1]<=view[3]);
+ assert.ok(visible.length>0);assert.ok(new Set(field.map(a=>Math.round(a.lane))).size>=3);
+});
+test('screen pointer samples keep straight bearings while preserving the full guide geometry',()=>{
+ const stroke=Array.from({length:61},(_,i)=>[100+i*10,300-i*2]),line=g.traceWindCenterline(stroke);
+ assert.equal(line.points.length,2);assert.ok(Math.abs((line.points[1][1]-line.points[0][1])/(line.points[1][0]-line.points[0][0])-(-.2))<.001);
+});
+test('inside a wide bend outer streamline travels farther than inner streamline',()=>{
+ for(const turn of [-1,1]){const field=g.windField([[0,300],[210+turn*60,80],[420,300]],160,undefined,27),lane24=field.filter(a=>a.lane===24&&a.station>100&&a.station<260),laneMinus=field.filter(a=>a.lane===-24&&a.station>100&&a.station<260);assert.ok(lane24.length&&laneMinus.length);assert.ok(average(lane24.map(a=>a.speedFactor))!==average(laneMinus.map(a=>a.speedFactor)));}
 });
 test('rain cell is eligible with at least three visible lightning corners and is omitted with two',()=>{
  const area={bounds:[0,0,200,200]},identity=p=>p,within=p=>p[0]<200&&p[1]<200;

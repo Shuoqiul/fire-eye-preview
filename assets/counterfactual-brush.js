@@ -43,7 +43,7 @@ window.FireBrush=class FireBrush {
     };
     this.canvas.onpointerup=()=>{if(!this.pressed)return;this.pressed=false;if(kind==='path'){if(this.points.length<2)return;this.hasPath=true;this.redraw();}this.confirm.disabled=false;};
     this.canvas.onpointercancel=()=>{this.pressed=false;};
-    this.escape=e=>{if(e.key==='Escape')this.close();};window.addEventListener('keydown',this.escape);this.onStatus?.('Drawing mode · Scroll to zoom; Confirm applies the shape.');
+    this.escape=e=>{if(e.key!=='Escape')return;e.preventDefault();e.stopImmediatePropagation();this.close();};window.addEventListener('keydown',this.escape,true);this.onStatus?.('Drawing mode · Scroll to zoom; Confirm applies the shape.');
   }
   position(e){const r=this.canvas.getBoundingClientRect();return[e.clientX-r.left,e.clientY-r.top];}
   world(px){const p=maplibregl.MercatorCoordinate.fromLngLat(this.map.unproject(px));return[p.x,p.y];}
@@ -92,6 +92,6 @@ window.FireBrush=class FireBrush {
     const nw=this.lngLat([west,north]),se=this.lngLat([east,south]);const area={width,height,bounds:[nw.lng,se.lat,se.lng,nw.lat],mask};this.close();this.onConfirm({kind:'area',area});
   }
   close(){
-    if(!this.active)return;this.active=false;this.pressed=false;this.map.off('move',this.camera);this.map.off('resize',this.camera);this.canvas?.remove();this.tools?.remove();if(this.pan)this.map.dragPan.enable();if(!this.scroll)this.map.scrollZoom.disable();if(this.touch)this.map.touchZoomRotate.enable();if(this.double)this.map.doubleClickZoom.enable();window.removeEventListener('keydown',this.escape);
+    if(!this.active)return;this.active=false;this.pressed=false;this.map.off('move',this.camera);this.map.off('resize',this.camera);this.canvas?.remove();this.tools?.remove();if(this.pan)this.map.dragPan.enable();if(!this.scroll)this.map.scrollZoom.disable();if(this.touch)this.map.touchZoomRotate.enable();if(this.double)this.map.doubleClickZoom.enable();window.removeEventListener('keydown',this.escape,true);
   }
 };

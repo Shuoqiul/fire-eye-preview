@@ -3,7 +3,7 @@
 (function(root){
  const copy=points=>{if(!Array.isArray(points)||points.some(p=>!Array.isArray(p)||p.length<2||!Number.isFinite(p[0])||!Number.isFinite(p[1])))throw Error('Provide finite coordinate pairs.');return points.map(p=>p.slice(0,2));};
  const distance=(a,b)=>Math.hypot(b[0]-a[0],b[1]-a[1]);
- const WIND_LIMIT=1200,WIND_GAP=5,WIND_CLEARANCE=4.5,WIND_BEND_CLEARANCE=8,WIND_HEAD_REACH=3,WIND_ZOOM_BEND_CLEARANCE=6;
+ const WIND_LIMIT=1200,WIND_GAP=5,WIND_CLEARANCE=4.5,WIND_BEND_CLEARANCE=8,WIND_HEAD_REACH=3;
  const clamp=(v,lo,hi)=>Math.max(lo,Math.min(hi,v));
  const pointBounds=points=>[Math.min(...points.map(p=>p[0])),Math.min(...points.map(p=>p[1])),Math.max(...points.map(p=>p[0])),Math.max(...points.map(p=>p[1]))];
  const polylineLength=points=>points.reduce((sum,p,i)=>sum+(i?distance(points[i-1],p):0),0);
@@ -23,13 +23,15 @@
     furthest=Math.max(furthest,along);return aligned;
    }))p=[start,end];
   }
-  const joined=smooth(p.length>128?sample(p,128):p,3),cumulative=[0];
+  const sampled=p.length>150?sample(p,150):p,stages=chord>180?Math.min(5,Math.ceil(chord/90)):1,pieces=[];
+  for(let k=0;k<stages;k++){const lo=Math.floor(k*sampled.length/stages),hi=Math.floor((k+1)*sampled.length/stages),piece=smooth(sampled.slice(lo,k===stages-1?undefined:hi+1),2);pieces.push(...(k?piece.slice(1):piece));}
+  const joined=smooth(pieces,1),cumulative=[0];
   for(let i=1;i<joined.length;i++)cumulative.push(cumulative.at(-1)+distance(joined[i-1],joined[i]));
   const length=cumulative.at(-1);if(length<1e-6)return null;
   const pointAt=station=>{station=Math.max(0,Math.min(length,station));let lo=0,hi=joined.length-1;while(hi-lo>1){const k=(lo+hi)>>1;if(cumulative[k]<=station)lo=k;else hi=k;}const span=cumulative[hi]-cumulative[lo],t=span?(station-cumulative[lo])/span:0;return joined[lo].map((v,j)=>v+(joined[hi][j]-v)*t);};
   const tangentAt=(station,radius)=>{const a=pointAt(station-radius),b=pointAt(station+radius),d=distance(a,b);if(d<1e-8){const c=pointAt(station+1),q=pointAt(station);const n=distance(c,q);return n?[(c[0]-q[0])/n,(c[1]-q[1])/n]:[1,0];}return[(b[0]-a[0])/d,(b[1]-a[1])/d];};
   const at=(station,window=24)=>{const tangent=tangentAt(station,Math.max(20,window*1.5)),before=tangentAt(station-window*4,Math.max(8,window*.5)),after=tangentAt(station+window*4,Math.max(8,window*.5)),turn=Math.atan2(before[0]*after[1]-before[1]*after[0],before[0]*after[0]+before[1]*after[1]);return {point:pointAt(station),tangent,normal:[-tangent[1],tangent[0]],turn};};
-  return {points:joined,cumulative,length,at};
+  return {points:joined,cumulative,length,at,start,end};
  }
  function windPolyline(g,width,curvature){
   const window=clamp(width*.23,20,55),direction=g.direction||1,at=g.line.at(g.station+direction*g.length/2,window);
@@ -70,28 +72,37 @@
   for(const [p,q] of [[-dx,a[0]-viewport[0]+pad],[dx,viewport[2]+pad-a[0]],[-dy,a[1]-viewport[1]+pad],[dy,viewport[3]+pad-a[1]]]){if(!p){if(q<0)return null;continue;}const t=q/p;if(p<0)lo=Math.max(lo,t);else hi=Math.min(hi,t);if(lo>hi)return null;}return[lo,hi];
  }
  function windFrame(time,phase=0){
-  const cycle=(((time/2400-phase)%1)+1)%1,head=clamp(cycle/.15,0,1),tail=clamp((cycle-.55)/.15,0,1),end=cycle>=.70?0:head,start=cycle>=.70?0:tail;
-  return {visible:end>start,start,end,head,cycle,sweep:.25,hold:cycle>=.55&&cycle<.70&&end>0};
+  if(!Number.isFinite(time)||!Number.isFinite(phase))throw Error('Wind time and phase must be finite.');
+  // A head continuously advances while a staggered tail follows. The small
+  // invisible reset happens between stations, so no viewport-wide hold exists.
+  // Travel spans [0, 1+trail] without a hold or backward jump. While the
+  // head passes the arrow end, the tail continues to advance and depart.
+  // Staggered phases offer coverage even as individual strokes complete.
+  const cycle=(((time/2400-phase)%1)+1)%1,trail=.70,travel=1+trail,start=clamp(cycle*travel-trail,0,1),end=clamp(cycle*travel,0,1);
+  return {visible:end>start,start,end,head:end,cycle,sweep:.25,hold:false};
  }
  function windVisibility(field,time){
   const visible=[];
   for(const arrow of field){
    const frame=windFrame(time,arrow.stagger);
-   if(frame.end-frame.start>=.35)visible.push({arrow,frame});
+   if(frame.end-frame.start>=.02)visible.push({arrow,frame});
   }
   return visible;
  }
  function windField(points,width=100,spacing=undefined,speed=27,viewport,options={},mapZoom){
   if(!Number.isFinite(width)||width<=0||(spacing!=null&&!(Number.isFinite(spacing)&&spacing>0))||!Number.isFinite(speed)||speed<0)throw Error('Wind dimensions and speed must be finite and positive.');
   const line=windCenterline(points);if(!speed||!line)return[];
-  const zoomScale=Number.isFinite(mapZoom)?clamp(1-(mapZoom-6)*.18,.65,1):null;
+  const visibleLine=line;
+  const zoomScale=Number.isFinite(mapZoom)?clamp(1-(mapZoom-6)*.025,.96,1):null;
   const scale=zoomScale??(viewport?clamp(Math.max(viewport[2]-viewport[0],viewport[3]-viewport[1])/1000,.7,1):1),lateral=(spacing||24)*scale,laneCount=Math.min(24,Math.max(0,Math.floor(width/2/lateral+1e-9))),lanes=[];
   for(let i=0;i<=laneCount;i++)lanes.push(...(i?[-i]:[]),i);
-  const glyphLength=Math.max(4,speed*scale),period=glyphLength*1.28,maxPerLane=Math.max(8,Math.ceil(WIND_LIMIT/2/lanes.length)),ranges=[];
-  for(let i=1;i<line.points.length;i++){const r=clipWindSegment(line.points[i-1],line.points[i],viewport,width/2+glyphLength*2+12);if(r){const start=line.cumulative[i-1],length=line.cumulative[i]-start,range=[start+r[0]*length,start+r[1]*length];if(ranges.length&&range[0]<=ranges.at(-1)[1]+1)ranges.at(-1)[1]=range[1];else ranges.push(range);}}
+  const glyphLength=Math.max(4,speed*scale),period=glyphLength*1.38,maxPerLane=Math.max(8,Math.ceil(WIND_LIMIT/2/lanes.length)),ranges=[];
+  // Sample only the guide's real extent. At a high zoom, a clipped centre
+  // segment retains lateral offsets inside the viewport.
+  for(let i=1;i<visibleLine.points.length;i++){const r=clipWindSegment(visibleLine.points[i-1],visibleLine.points[i],viewport,width/2+glyphLength*2+12);if(r){const start=visibleLine.cumulative[i-1],length=visibleLine.cumulative[i]-start,range=[start+r[0]*length,start+r[1]*length];if(ranges.length&&range[0]<=ranges.at(-1)[1]+1)ranges.at(-1)[1]=range[1];else ranges.push(range);}}
   const out=[],bins=new Map(),cellSize=64;let attempts=0;
   const cells=box=>{const keys=[];for(let y=Math.floor(box[1]/cellSize);y<=Math.floor(box[3]/cellSize);y++)for(let x=Math.floor(box[0]/cellSize);x<=Math.floor(box[2]/cellSize);x++){keys.push(x+','+y);if(keys.length>256)return keys;}return keys;};
-  const curvatureAt=station=>line.at(station+glyphLength/2,24).turn;
+  const curvatureAt=station=>visibleLine.at(station+glyphLength/2,24).turn;
   const collides=candidate=>{
    if(!candidate||!Number.isFinite(candidate.arcLength)||candidate.arcLength<2)return true;
    const box=candidate.bounds,reach=WIND_BEND_CLEARANCE+WIND_HEAD_REACH,neighbors=new Set(cells([box[0]-reach,box[1]-reach,box[2]+reach,box[3]+reach]).flatMap(key=>bins.get(key)||[]));
@@ -99,23 +110,23 @@
    return false;
   };
   const make=(lane,index,station,desired,offset,variation,physical,virtual=false,span)=>{
-   const side=clamp(offset/(width/2),-1,1),length=Math.min(desired,line.length-station,2*(period*.5-Math.abs(offset)*.00017));if(length<2)return null;
-   const curve=windPolyline({line,station,length,offset,variation:Math.min(variation,1-.10*Math.abs(side))},width,curvatureAt(station)),arc=polylineLength(curve),box=pointBounds(curve);span=span??length;
-   const clearance=Math.max(Math.abs(line.at(station,24).turn),Math.abs(line.at(station+span,24).turn),Math.abs(line.at(station+span/2,24).turn))>.08?WIND_BEND_CLEARANCE:WIND_CLEARANCE;
+   const side=clamp(offset/(width/2),-1,1),length=Math.min(desired,visibleLine.length-station,2*(period*.5-Math.abs(offset)*.00017));if(length<2)return null;
+   const curve=windPolyline({line:visibleLine,station,length,offset,variation:Math.min(variation,1-.10*Math.abs(side))},width,curvatureAt(station)),arc=polylineLength(curve),box=pointBounds(curve);span=span??length;
+   const clearance=Math.max(Math.abs(visibleLine.at(station,24).turn),Math.abs(visibleLine.at(station+span,24).turn),Math.abs(visibleLine.at(station+span/2,24).turn))>.08?WIND_BEND_CLEARANCE:WIND_CLEARANCE;
    const from=curve[0],to=curve.at(-1),pathPhase=((index-lane)%4+4)%4,stagger=physical?((Math.floor(pathPhase)/4)%1+lane*.027+offset*.00017+1)%1:Math.floor(index/4)/4;
    return {id:'w-'+lane+'-'+Math.round((index+.001)*1000),from,to,points:curve,vector:[to[0]-from[0],to[1]-from[1]],phase:stagger,stagger,period,pitch:.5,physical,virtual,index,contributors:1,lane:offset,pathLane:offset,laneOffset:offset,station,major:lane===0,arcLength:arc,glyphLength:arc,spanLength:span,visualLength:desired,speedFactor:arc/span,strength:arc/speed,pathLength:line.length,laneGap:WIND_GAP,direction:1,bounds:box,clearance};
    };
   const commit=arrow=>{out.push(arrow);const keys=cells(arrow.bounds);for(const key of keys){if(!bins.has(key))bins.set(key,[]);bins.get(key).push(arrow);}};
   for(const lane of lanes){let laneItems=0;const offset=lane*lateral,primary=lane===0;
    for(const range of ranges){let station=period+Math.max(0,Math.ceil((range[0]-period)/period))*period;
-    for(let next=0;station<=Math.min(line.length,range[1]+glyphLength)&&next++<maxPerLane;station+=period){
+    for(let next=0;station<=Math.min(visibleLine.length,range[1]+glyphLength)&&next++<maxPerLane;station+=period){
      if(++attempts>maxPerLane*lanes.length*2||out.length>=WIND_LIMIT)return out;if(laneItems>=maxPerLane)break;
-     const index=Math.round(station/period),variation=primary?1:Math.min(1,(1-.12*Math.abs(offset)/(width/2))*(1+.08*Math.sin(index*.71+lane*1.31))),curve=windPolyline({line,station,length:Math.min(line.length-station,period),offset,variation},width,curvatureAt(station)),arc=polylineLength(curve);
+     const index=Math.round(station/period),variation=primary?1:Math.min(1,(1-.12*Math.abs(offset)/(width/2))*(1+.08*Math.sin(index*.71+lane*1.31))),curve=windPolyline({line:visibleLine,station,length:Math.min(visibleLine.length-station,glyphLength),offset,variation},width,curvatureAt(station)),arc=polylineLength(curve);
      if(!Number.isFinite(arc)||arc<2)continue;const box=pointBounds(curve);
      if(viewport&&(box[2]<viewport[0]-100||box[0]>viewport[2]+100||box[3]<viewport[1]-100||box[1]>viewport[3]+100))continue;
      let arrow=make(lane,index,station,glyphLength,offset,variation,true,false,period);
-     if(collides(arrow))for(const [retry,lateralShift,lengthScale] of [[station,0,1],[station-.12,0,1],[station+.12,0,1],[station-glyphLength*.06,-2,1],[station+glyphLength*.06,2,1],[station,0,.82],[station-glyphLength*.08,-2,.82],[station+glyphLength*.08,2,.82]]){
-      const candidate=make(lane,index,retry,glyphLength*lengthScale,offset+lateralShift,variation,true,false,station+period-retry);if(!collides(candidate)){candidate.retry={station:retry-station,lateral:lateralShift,lengthScale};arrow=candidate;break;}
+     if(collides(arrow))for(const [lateralShift,lengthScale] of [[0,1],[-2,1],[2,1],[0,.82],[0,.82],[-2,.82],[2,.82]]){
+      const candidate=make(lane,index,station,glyphLength*lengthScale,offset+lateralShift,variation,true,false,period);if(!collides(candidate)){candidate.retry={lateral:lateralShift,lengthScale};arrow=candidate;break;}
      }
      if(collides(arrow))continue;commit(arrow);laneItems++;
     }
@@ -123,8 +134,8 @@
   }
   if(options.innerDensity)for(const lane of [-1,1]){let laneItems=0;const offset=lane*lateral;
    for(const range of ranges){let station=period+Math.max(0,Math.ceil((range[0]-period)/period))*period;
-    for(let next=0;station<=Math.min(line.length,range[1]+glyphLength)&&next++<maxPerLane*2;station+=period){
-     if(laneItems>=maxPerLane||out.length>=WIND_LIMIT)break;const index=Math.round(station/period),length=Math.min(line.length-station,glyphLength),curve=windPolyline({line,station,length,offset,variation:1},width,curvatureAt(station)),arc=polylineLength(curve);if(!Number.isFinite(arc)||arc<2)continue;const box=pointBounds(curve),clearance=Math.max(Math.abs(line.at(station,24).turn),Math.abs(line.at(station+length,24).turn),Math.abs(line.at(station+length/2,24).turn))>.08?WIND_BEND_CLEARANCE:WIND_CLEARANCE,keys=cells(box),reach=WIND_BEND_CLEARANCE+WIND_HEAD_REACH,neighbors=new Set(cells([box[0]-reach,box[1]-reach,box[2]+reach,box[3]+reach]).flatMap(key=>bins.get(key)||[])),current={points:curve};let blocked=false;
+    for(let next=0;station<=Math.min(visibleLine.length,range[1]+glyphLength)&&next++<maxPerLane*2;station+=period){
+     if(laneItems>=maxPerLane||out.length>=WIND_LIMIT)break;const index=Math.round(station/period),length=Math.min(visibleLine.length-station,glyphLength),curve=windPolyline({line:visibleLine,station,length,offset,variation:1},width,curvatureAt(station)),arc=polylineLength(curve);if(!Number.isFinite(arc)||arc<2)continue;const box=pointBounds(curve),clearance=Math.max(Math.abs(visibleLine.at(station,24).turn),Math.abs(visibleLine.at(station+length,24).turn),Math.abs(visibleLine.at(station+length/2,24).turn))>.08?WIND_BEND_CLEARANCE:WIND_CLEARANCE,keys=cells(box),reach=WIND_BEND_CLEARANCE+WIND_HEAD_REACH,neighbors=new Set(cells([box[0]-reach,box[1]-reach,box[2]+reach,box[3]+reach]).flatMap(key=>bins.get(key)||[])),current={points:curve};let blocked=false;
       for(const other of neighbors){if(!windBoundsMeet(box,other.bounds))continue;const threshold=Math.max(clearance,other.clearance);if(windJump(current,other,threshold)||distance(curve[Math.floor(curve.length/2)],other.points[Math.floor(other.points.length/2)])<WIND_GAP||windHeadNear(current,other,clearance)||windHeadNear(other,current,clearance)){blocked=true;break;}}
       if(blocked)continue;commit(make(lane,index,station,length,offset,1,false));laneItems++;
     }

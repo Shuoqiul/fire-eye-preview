@@ -14,7 +14,23 @@ test('dry thunder exposes zero score shift and wet thunder exposes a native-deri
  assert.equal(dry.score.delta[0][0],0);
  assert.ok(wet.score.delta[0][0]<0);
 });
-test('treatment requires paired fuel-process outcomes instead of an invented score offset',()=>{const r=run('prescribed_burn',{treatedFraction:1,ageYears:0});assert.equal(r.available,false);assert.match(r.reason,/Fuel-state/);assert.ok(r.windows.every(w=>w.scenario.every(Number.isNaN)));assert.deepEqual([...r.windows[0].publishedBaseline],[...make().windows[0].values]);});
+test('treatment requires paired fuel-process outcomes instead of an invented score offset',()=>{const r=run('prescribed_burn',{treatedFraction:1,ageYears:0}),source=make().windows[0].values;assert.equal(r.available,false);assert.equal(r.treatmentStatus,'unavailable');assert.match(r.reason,/Paired fuel-state outcomes/);for(const w of r.windows)for(let i=0;i<source.length;i++)assert.equal(w.publishedBaseline[i],source[i]);assert.deepEqual([...r.windows[0].publishedBaseline],[...source]);});
+test('prescribed burn keeps an exact usable released baseline and a separately unavailable treatment effect',()=>{
+ const area={width:2,height:2,bounds:[-96,37.8,-95.8,38.2],mask:[1,1,1,1]},e=model.normalize({...event('prescribed_burn'),treatedFraction:.6,ageYears:2,area}),r=model.run({...make(),event:e});
+ assert.equal(r.available,false);assert.equal(r.treatmentStatus,'unavailable');
+ assert.deepEqual([...r.score.published[0]],[...make().windows[0].values]);
+ for(let i=0;i<4;i++){const source=make().windows[0].values[i];assert.equal(r.windows[0].publishedBaseline[i],source);assert.equal(r.score.scenario[0][i],source);assert.equal(r.score.delta[0][i],0);}
+ assert.ok(r.footprint.cells>0&&r.footprint.cells<4);assert.match(r.reason,/Published reference is retained/);
+ assert.equal(r.windows[0].summary.cells,r.footprint.cells);assert.equal(r.windows[0].summary.tableAvailable,true);assert.equal(r.windows[0].summary.nativeAvailable,false);
+});
+test('dry and wet thunder expose score and discovery values in every window',()=>{
+ for(const rainIn of [0,1]){const d=run('thunderstorm',{rainIn,dry:rainIn===0,coverage:.4,startH:0,durationH:12});assert.equal(d.discovery.coverage,.4);assert.equal(d.discovery.rainIn,rainIn);assert.ok(Number.isFinite(d.discovery.holdoverAtScenarioDailyRain));for(const w of d.windows){assert.ok(Number.isFinite(w.summary.scenarioScore));assert.ok(Number.isFinite(w.summary.changeScore));assert.ok(w.summary.score.available);}}
+});
+test('published-reference run retains source values without an event footprint',()=>{
+ const input=make([12],[0,.4,NaN,1]),r=model.run({...input,event:null});
+ assert.equal(r.windows[0].summary.cells,3);assert.equal(r.treatmentStatus,'reference');assert.equal(r.available,true);
+ for(let i=0;i<4;i++){const before=input.windows[0].values[i];if(Number.isNaN(before))assert.ok(Number.isNaN(r.windows[0].scenario[i]));else assert.equal(r.windows[0].scenario[i],before);}
+});
 test('missing earlier published windows preserve causal rain history and actual leads',()=>{const e=event('heavy_rain',{startH:0,durationH:12,rainIn:1}),all=model.run({...make(),event:e}),late=model.run({...make([36,48]),event:e});assert.equal(late.windows[0].scenario[0],all.windows[2].scenario[0]);assert.equal(late.windows[0].leadHours,36);for(const w of all.windows)assert.equal(w.span,all.span)});
 test('valid zero/one published values do not gate native response and nodata stays nodata',()=>{const r=run('high_wind',{windMph:58},make([12],[0,1,NaN,.4]));const w=r.windows[0];assert.equal(w.publishedBaseline[0],0);assert.equal(w.publishedBaseline[1],1);assert.equal(w.scenario[0],w.scenario[1]);assert.ok(w.scenario[0]>1);assert.ok(Number.isNaN(w.scenario[2]));assert.equal(r.unit,'score');assert.equal(r.nativeUnit,'ISI');});
 test('hurricane track and declared landfall change physical wind radii',()=>{const e=event('hurricane');assert.notDeepEqual(model.trackCenter(e,12),model.trackCenter(e,24));assert.ok(model.decayedWind(100,30,24)<model.decayedWind(100,30,12));assert.ok(model.tcRadius(100,30,34,45)>0);const r=run('hurricane',{track:[[-96,38,100],[-96,38,100],[-96,38,100],[-96,38,100],[-96,38,100],[-96,38,100]]});assert.equal(r.windows[0].summary.cells,4);assert.ok(Number.isFinite(r.windows[0].summary.scenario))});
