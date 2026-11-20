@@ -5,7 +5,7 @@
   const events={hurricane:'Hurricane',thunderstorm:'Thunderstorm',high_wind:'High wind',heavy_rain:'Heavy rain',prescribed_burn:'Prescribed burn'};
   const presets=FirePresets.groups;
   const state={open:false,event:null,result:null,view:'change',mode:'everyone',windowIndex:0,status:'idle'};
-  let panel,output,status,token=0,grid,features=[],geoKey='',saved,drag=null,drawing=null,suppressClick=false,brush=null,animation=0,icons=[],windArrows=[],areaImage=null,stormSymbols=[],coast=null,coastReady=null;
+  let panel,output,status,token=0,grid,features=[],geoKey='',saved,drag=null,drawing=null,suppressClick=false,brush=null,animation=0,icons=[],windArrows=[],stormSymbols=[],coast=null,coastReady=null,motionTextures=[],motionStart=0,motionCanvas=null,motionPixels=null,motionContext=null;
   const S=()=>window.fireEyePreview;
   const fc=features=>({type:'FeatureCollection',features});
   const feature=(geometry,kind,properties={})=>({type:'Feature',geometry,properties:{kind,...properties}});
@@ -102,7 +102,15 @@
       if(e.type==='hurricane'){const l=node('label','','cf-field'),v=node('input');v.type='checkbox';v.checked=e.rainIn>0;v.onchange=()=>change({rainIn:v.checked?1:0});l.append(node('span','Include R-CLIPER rainfall'),v);fields.append(l);}
       if(e.type==='prescribed_burn'){numeric(fields,'Treated fraction · %','treatedFraction',0,100,1,100);numeric(fields,'Years since treatment','ageYears',0,100,.1);}
     }
+    if(e.area){
+      const motion=e.motion||FireMotion.defaults(),wrap=node('label','','cf-field cf-width-control'),input=node('input'),value=node('output',String(motion.speed));
+      input.type='range';input.min=0;input.max=100;input.step=1;input.value=motion.speed;input.id='cf-motion-speed';
+      input.oninput=()=>{state.event.motion=FireMotion.normalize({speed:Number(input.value)});value.textContent=input.value;motionStart=performance.now();};
+      input.onwheel=ev=>{ev.preventDefault();input.value=Math.max(0,Math.min(100,Number(input.value)+(ev.deltaY<0?1:-1)));input.oninput();};
+      wrap.append(node('span','Edge ripple · activity'),input,value);fields.append(wrap);
+    }
     box.append(fields);if(e.type==='prescribed_burn')box.append(node('p','Fuel-state treatment rules and a paired spread model supply this prediction. The current sample provides baseline fuel classes.','cf-hint'));
+
     if(e.type==='hurricane'&&state.mode==='expert') {
       const track=node('details','','cf-track-editor');track.open=state.mode==='expert';track.append(node('summary','Track · 12-hour positions · wind in kt'));
       const table=node('table'),header=node('tr');for(const name of ['Point','Lon','Lat','Vmax',''])header.append(node('th',name));table.append(header);
@@ -147,13 +155,20 @@
       const info=FireWeatherSymbols.intensity(p[2]);icons[i].getElement().style.color=info.color;icons[i].getElement().title=info.label+' · '+p[2]+' kt';icons[i].setLngLat(p.slice(0,2));
     });
   }
-  function areaTexture(e){
-    const a=e.area,mask=Uint8Array.from(a.mask),inside=FireDrawing.distanceField(mask,a.width,a.height),outside=FireDrawing.distanceField(Uint8Array.from(mask,v=>v?0:1),a.width,a.height,false),max=Math.max(1,...inside),intensity=FireDrawing.shadeIntensity(e),canvas=document.createElement('canvas');canvas.width=a.width;canvas.height=a.height;const ctx=canvas.getContext('2d'),image=ctx.createImageData(a.width,a.height);
-    for(let i=0;i<mask.length;i++){
-      const strength=mask[i]?.25+.75*inside[i]/max:Math.max(0,1-outside[i]/Math.max(3,max*.3))*.16;
-      if(strength)image.data.set(FireArea.pixel(e.type,strength,intensity,!!mask[i]),i*4);
-    }
-    ctx.putImageData(image,0,0);const b=a.bounds;return {url:canvas.toDataURL(),coordinates:[[b[0],b[3]],[b[2],b[3]],[b[2],b[1]],[b[0],b[1]]]};
+  function areaTextures(e){
+    const a=e.area,padding=Math.ceil(Math.min(a.width,a.height)*.3)+4,width=a.width+padding*2,height=a.height+padding*2,mask=new Uint8Array(width*height);
+    for(let y=0;y<a.height;y++)mask.set(a.mask.slice(y*a.width,(y+1)*a.width),(y+padding)*width+padding);
+    const inside=FireDrawing.distanceField(mask,width,height),outside=FireDrawing.distanceField(Uint8Array.from(mask,v=>v?0:1),width,height,false),max=inside.reduce((m,v)=>Math.max(m,v),1),intensity=FireDrawing.shadeIntensity(e);
+    const frames=Array.from({length:FireMotion.frameCount},(_,key)=>{
+      const image=motionContext.createImageData(width,height);
+      for(let i=0;i<mask.length;i++){
+        const distance=FireMotion.contour(mask[i]?inside[i]-.5:.5-outside[i],i%width-width/2,Math.floor(i/width)-height/2,key,max),core=distance>0,strength=core?.25+.75*Math.min(1,distance/max):Math.max(0,1+distance/Math.max(3,max*.3))*.16;
+        if(strength)image.data.set(FireArea.pixel(e.type,strength,intensity,core),i*4);
+      }
+      return image;
+    });
+    const b=a.bounds,merc=lat=>(1-Math.log(Math.tan(Math.PI/4+lat*Math.PI/360))/Math.PI)/2,lat=y=>(Math.atan(Math.exp(Math.PI*(1-2*y)))*2-Math.PI/2)*180/Math.PI,dy=(merc(b[1])-merc(b[3]))*padding/a.height,north=lat(merc(b[3])-dy),south=lat(merc(b[1])+dy),dx=(b[2]-b[0])*padding/a.width;
+    return {frames,coordinates:[[b[0]-dx,north],[b[2]+dx,north],[b[2]+dx,south],[b[0]-dx,south]]};
   }
   function geometry() {
     if(!state.open)return;const map=S().map,e=state.event,f=[];updateIcons(e);windArrows=[];
@@ -163,7 +178,14 @@
       const screen=guide.map(p=>{const q=map.project(p);return[q.x,q.y];}),anchor=guide[Math.floor(guide.length/2)],width=Math.max(2,Math.abs(map.project(move(anchor,90,e.radiusKm)).x-map.project(anchor).x)*2);
       windArrows=FireDrawing.windField(screen,width,undefined,e.windMph,[0,0,map.getContainer().clientWidth,map.getContainer().clientHeight]).map(a=>({...a,from:map.unproject(a.from).toArray(),to:map.unproject(a.to).toArray(),points:(a.points||[a.from,a.to]).map(p=>map.unproject(p).toArray())}));
     }
-    if(e.area){areaImage=areaTexture(e);if(map.getSource('cf-area'))map.getSource('cf-area').updateImage(areaImage);else{map.addSource('cf-area',{type:'image',...areaImage});map.addLayer({id:'cf-area-fill',type:'raster',source:'cf-area',paint:{'raster-opacity':1,'raster-fade-duration':0,'raster-resampling':'linear'}},'cf-event-line');}map.setLayoutProperty('cf-area-fill','visibility','visible');
+    if(e.area){
+      if(!motionCanvas){motionCanvas=document.createElement('canvas');motionContext=motionCanvas.getContext('2d');}
+      const {frames,coordinates}=areaTextures(e),first=frames[0];motionTextures=frames;motionStart=performance.now();
+      motionCanvas.width=first.width;motionCanvas.height=first.height;
+      motionPixels=motionContext.createImageData(first.width,first.height);motionContext.putImageData(first,0,0);
+      if(map.getSource('cf-area'))map.getSource('cf-area').setCoordinates(coordinates);
+      else{map.addSource('cf-area',{type:'canvas',canvas:motionCanvas,animate:true,coordinates});map.addLayer({id:'cf-area-fill',type:'raster',source:'cf-area',paint:{'raster-opacity':1,'raster-fade-duration':0,'raster-resampling':'linear'}},'cf-event-line');}
+      map.setLayoutProperty('cf-area-fill','visibility','visible');
     }else if(map.getLayer('cf-area-fill'))map.setLayoutProperty('cf-area-fill','visibility','none');
     updateStormSymbols(e);
     const handles=e.type==='hurricane'?e.track:e.area?[e.center]:e.polygon||[e.center];handles.forEach((p,index)=>f.push(feature({type:'Point',coordinates:p.slice(0,2)},'handle',{index})));
@@ -183,7 +205,12 @@
     for(const cell of layout.lightning)add('lightning',cell.position,FireWeatherSymbols.lightningSvg('currentColor'));
     if(drops)for(const cell of layout.rain)add('rain',cell.position,FireWeatherSymbols.rainSvg(drops,'currentColor'),cell.cornerCount);
   }
-  function positionStormSymbols(translate=p=>p,opacity=1){for(const symbol of stormSymbols){symbol.marker.setLngLat(translate(symbol.position));symbol.marker.getElement().style.opacity=opacity;}}
+  function motionFrame(time){
+    if(!state.event.area||!motionTextures.length||!S().map.getSource('cf-area')||state.result?.available)return;
+    const reduced=matchMedia('(prefers-reduced-motion:reduce)').matches,frame=FireMotion.frame(state.event.motion||FireMotion.defaults(),reduced?0:Math.max(0,time-motionStart));
+    const a=motionTextures[frame.key],b=motionTextures[frame.next];
+    FireMotion.blendPixels(a.data,b.data,frame.mix,motionPixels.data);motionContext.putImageData(motionPixels,0,0);
+  }
   function drawWindCurve(ctx,points,frame){
     const arcs=[0];for(let i=1;i<points.length;i++)arcs.push(arcs.at(-1)+Math.hypot(points[i][0]-points[i-1][0],points[i][1]-points[i-1][1]));
     const total=arcs.at(-1);if(!total)return;
@@ -199,7 +226,7 @@
     }ctx.stroke();
   }
   function animate(time){
-    if(!state.open)return;const map=S().map,canvas=$('cf-wind-animation');if(canvas){const dpr=Math.min(devicePixelRatio,2),rect=map.getContainer().getBoundingClientRect();if(canvas.width!==Math.round(rect.width*dpr)||canvas.height!==Math.round(rect.height*dpr)){canvas.width=Math.round(rect.width*dpr);canvas.height=Math.round(rect.height*dpr);}const ctx=canvas.getContext('2d');ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,rect.width,rect.height);const reduced=matchMedia('(prefers-reduced-motion: reduce)').matches;
+    if(!state.open)return;motionFrame(time);const map=S().map,canvas=$('cf-wind-animation');if(canvas){const dpr=Math.min(devicePixelRatio,2),rect=map.getContainer().getBoundingClientRect();if(canvas.width!==Math.round(rect.width*dpr)||canvas.height!==Math.round(rect.height*dpr)){canvas.width=Math.round(rect.width*dpr);canvas.height=Math.round(rect.height*dpr);}const ctx=canvas.getContext('2d');ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,rect.width,rect.height);const reduced=matchMedia('(prefers-reduced-motion: reduce)').matches;
       ctx.lineCap='round';ctx.lineJoin='round';
       for(const arrow of windArrows){
         const frame=reduced?{visible:true,start:0,end:1,head:true}:FireDrawing.windFrame(time,arrow.phase);if(!frame.visible)continue;
@@ -214,7 +241,7 @@
     if(!state.open)return;const map=S().map,r=state.result;
     S().setRiskDisplay(saved.opacity,r&&(r.available||state.view==='published')?false:saved.visible);
     const showArea=!r||!r.available;
-    for(const layer of ['cf-area-fill','cf-area-next-fill'])if(map.getLayer(layer))map.setLayoutProperty(layer,'visibility',showArea&&state.event.area?'visible':'none');
+    if(map.getLayer('cf-area-fill'))map.setLayoutProperty('cf-area-fill','visibility',showArea&&state.event.area?'visible':'none');
     for(const symbol of stormSymbols)symbol.marker.getElement().style.visibility=showArea?'visible':'hidden';
     if(!map.getLayer('cf-result-fill'))return;
     map.setLayoutProperty('cf-result-fill','visibility',r&&(r.available||state.view==='published')?'visible':'none');

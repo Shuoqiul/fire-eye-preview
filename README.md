@@ -47,11 +47,13 @@ Browser checks use the bundled release with external requests blocked, and cover
 
 The public scenario editor now includes **Draw event on map**: confirm a smoothed hurricane/wind path, or paint and erase an irregular rain/lightning/treatment footprint. The basic branch includes rotating CMA-colour cyclone markers and looping wind arrows. See [drawing change notes](docs/changes/2026-11-10-counterfactual-drawing.md) and [Cloudflare setup](docs/cloudflare.md).
 
-Weather-symbol, wind-vector and preset visual refinements are documented in [weather visual changes](docs/changes/2026-11-10-weather-visuals.md). Use `dev` for the advanced motion preview, with build `npm run build` and non-production deploy `npx wrangler preview`; production stays on `main`.
+Weather-symbol, wind-vector and preset visual refinements are documented in [weather visual changes](docs/changes/2026-11-10-weather-visuals.md). For a Cloudflare preview, build with `npm run build` and run `npx wrangler preview`.
 
 The public editor uses complete event recipes and now/24-hour timing. Expert mode retains timing and numerical edits. High-wind width adjusts across the drawn path, while arrow density adapts to wind speed. See [public recipes and Preview fix](docs/changes/2026-11-10-public-presets-and-preview.md).
 
 Current mechanism equations, visual changes and the questions for scientific review are collected in [mechanisms and cloud-churn handoff](docs/changes/2026-11-10-mechanisms-and-cloud-churn.md). Wind width is 20–200 km. Change maps keep event tint separate from score differences.
+
+Area events use a seamless radar-style loop: the footprint and its interior stay anchored while the outer contour ripples. The activity slider adjusts tempo; zero holds the texture still.
 
 ## Research formulas and private local sample
 

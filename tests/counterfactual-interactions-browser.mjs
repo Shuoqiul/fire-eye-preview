@@ -20,6 +20,14 @@ try{
  await page.getByRole('button',{name:'Confirm',exact:true}).click();assert.equal(await page.locator('.cf-brush-canvas').count(),0);
  assert.ok(await page.evaluate(()=>fireEyeCounterfactual.event.windPath.length>=6));await page.waitForTimeout(300);
  const directory=process.env.CF_SCREENSHOT_DIR||'/tmp/cf-radar-acceptance';fs.mkdirSync(directory,{recursive:true});await page.screenshot({path:directory+'/wind-desktop.png'});
+ await page.evaluate(()=>fireEyePreview.map.jumpTo({center:[-98,38],zoom:6}));
+ await page.locator('[data-event="high_wind"]').click();
+ await page.mouse.move(760,610);await page.mouse.down();for(const p of [[820,611],[880,609],[940,612],[1000,609],[1060,611],[1120,610]])await page.mouse.move(...p,{steps:8});await page.mouse.up();
+ await page.getByRole('button',{name:'Confirm',exact:true}).click();
+ await page.locator('#cf-radiusKm').evaluate(el=>{el.value=200;el.dispatchEvent(new Event('input'));});
+ const straight=await page.evaluate(()=>{const project=p=>fireEyePreview.map.project(p),arrows=fireEyeCounterfactual.visuals.windVectors.map(v=>v.points.map(project));return {width:fireEyeCounterfactual.event.radiusKm*2,span:Math.max(...arrows.map(a=>a[0].y))-Math.min(...arrows.map(a=>a[0].y)),aligned:arrows.every(a=>a.at(-1).x>a[0].x&&a.every(p=>Math.abs(p.y-a[0].y)<.1))};});
+ assert.equal(straight.width,200);assert.ok(straight.span>72,'wide corridor retains outer lanes');assert.ok(straight.aligned,'wide outer arrows follow the drawn heading');
+ await page.screenshot({path:directory+'/wind-straight-wide.png'});
  await page.locator('[data-event="heavy_rain"]').click();await page.mouse.move(820,600);await page.mouse.down();await page.mouse.move(1050,660,{steps:15});await page.mouse.move(1010,760,{steps:10});await page.mouse.up();await page.getByRole('button',{name:'Confirm',exact:true}).click();
  assert.ok(await page.evaluate(()=>fireEyeCounterfactual.event.area.mask.some(Boolean)));
  await page.screenshot({path:directory+'/area-desktop.png'});

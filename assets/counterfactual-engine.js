@@ -175,6 +175,11 @@
     for (const key of Object.keys(LIMITS)) n[key] = numberIn(event[key], key, LIMITS[key]);
     if (event.dry != null && typeof event.dry !== 'boolean') throw new Error('dry must be true or false.');
     n.dry = event.dry;
+    if(event.area && ['heavy_rain','thunderstorm','prescribed_burn'].includes(event.type)){
+      const motion=event.motion||{speed:30};
+      if(!Number.isFinite(motion.speed)||motion.speed<0||motion.speed>100)throw Error('Cloud activity must be within 0–100.');
+      n.motion={speed:motion.speed};
+    }
     if(event.area)n.area=normalizeArea(event.area);
     if(event.windPath){if(!Array.isArray(event.windPath)||event.windPath.length<2||event.windPath.length>128||event.windPath.some(p=>!validPoint(p)))throw Error('Wind path needs valid points.');n.windPath=event.windPath.map(p=>[...p]);}
     if (event.landfallHours != null && !inRange(event.landfallHours, 0, 100000)) {

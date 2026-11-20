@@ -55,6 +55,19 @@ test('curved streamlines are longer and faster outside a bend',()=>{
  const inside=glyph(-20,1),outside=glyph(20,1),before=glyph(-20,-1),after=glyph(20,-1),length=curveLength,span=points=>Math.hypot(points.at(-1)[0]-points[0][0],points.at(-1)[1]-points[0][1]);
  assert.ok(length(outside)>length(inside));assert.ok(span(outside)>span(inside));assert.ok(inside.length>0&&outside.length>0);assert.ok(outside.some((p,i)=>i&&(p[0]!==outside[i-1][0]||p[1]!==outside[i-1][1])));
 });
+test('wide straight guides keep every lane straight, parallel and positionally distinct',()=>{
+ const guide=[[0,0],[1800,0]],denseGuide=g.sample(guide,48),jittered=denseGuide.map(([x,y],i)=>[x,y+(i>0&&i<47?Math.sin(i*2)*3:0)]);
+ for(const path of [guide,denseGuide,jittered])for(const speed of [8,27,45,58]){
+  const field=g.windField(path,240,undefined,speed),lanes=[...new Set(field.map(v=>v.lane))];
+  assert.ok(lanes.some(lane=>Math.abs(lane)>110));
+  assert.ok(field.every(v=>v.to[0]>v.from[0]&&v.points.every(p=>Math.abs(p[1]-v.from[1])<.01)));
+  assert.ok(lanes.length>=5);assert.equal(new Set(field.map(v=>v.from.slice(0,2).join(','))).size,field.length);
+ }
+ const reversing=g.traceWindCenterline([[0,0],[200,0],[40,1],[300,0]]);
+ assert.ok(reversing.length>400);
+ const track=g.windField(guide,240,undefined,58).filter(v=>v.station>700&&v.station<1000),outer=track.filter(v=>Math.abs(v.lane)===120),centre=track.filter(v=>v.lane===0);
+ assert.ok(outer.length&&centre.length);assert.ok(outer.every(v=>v.arcLength<58+1e-8));assert.ok(average(outer.map(v=>v.arcLength))<average(centre.map(v=>v.arcLength)));
+});
 test('wind frames retain eased growth, blank phases and staggered phases',()=>{
  assert.ok(g.windFrame(240,0).head);assert.ok(!g.windFrame(900,0).head);assert.ok(g.windFrame(900,0).start>0);assert.equal(g.windFrame(1500,0).visible,false);
  const field=g.windField([[0,100],[300,0]],120,undefined,45);assert.ok(new Set(field.map(v=>v.phase)).size>field.length/2);for(let t=2400;t<4800;t+=50)assert.ok(field.some(a=>g.windFrame(t,a.phase).visible));

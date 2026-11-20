@@ -10,7 +10,18 @@
  function sample(points,count=6){const p=copy(points);if(!Number.isInteger(count)||count<2||count>512||!p.length)throw Error('Sample count must be 2–512 with at least one point.');if(p.length===1)return Array.from({length:count},()=>[...p[0]]);const arcs=[0];for(let i=1;i<p.length;i++)arcs.push(arcs.at(-1)+distance(p[i-1],p[i]));const out=[];let segment=1;for(let i=0;i<count;i++){const at=arcs.at(-1)*i/(count-1);while(segment<p.length-1&&arcs[segment]<at)segment++;const a=p[segment-1],b=p[segment],span=arcs[segment]-arcs[segment-1],t=span?(at-arcs[segment-1])/span:0;out.push([a[0]+(b[0]-a[0])*t,a[1]+(b[1]-a[1])*t]);}out[0]=[...p[0]];out[count-1]=[...p.at(-1)];return out;}
  function smooth(points,iterations=2){let p=copy(points);if(p.length<3)return p;const simplified=[p[0]];for(let i=1;i<p.length-1;i++)if(distance(p[i],simplified.at(-1))>=2)simplified.push(p[i]);simplified.push(p.at(-1));p=simplified.length>128?sample(simplified,128):simplified;for(let n=0;n<Math.min(3,Math.max(0,iterations));n++){const next=[p[0]];for(let i=1;i<p.length;i++){const a=p[i-1],b=p[i];next.push([a[0]*.75+b[0]*.25,a[1]*.75+b[1]*.25],[a[0]*.25+b[0]*.75,a[1]*.25+b[1]*.75]);}next.push(p.at(-1));p=next.length>512?sample(next,512):next;}return p;}
  function windCenterline(points){
-  const p=copy(points).filter((q,i,all)=>!i||distance(q,all[i-1])>1e-7);if(p.length<2)return null;
+  let p=copy(points).filter((q,i,all)=>!i||distance(q,all[i-1])>1e-7);if(p.length<2)return null;
+  const start=p[0],end=p.at(-1),chord=distance(start,end);
+  if(p.length>2&&chord>=24){
+   // Treat minor pointer jitter as a straight guide. Keep genuine turns and reversals.
+   const ux=(end[0]-start[0])/chord,uy=(end[1]-start[1])/chord,tol=Math.min(5,Math.max(1.25,chord*.012));
+   let furthest=0;
+   if(p.every(([x,y])=>{
+    const dx=x-start[0],dy=y-start[1],along=dx*ux+dy*uy;
+    const aligned=Math.abs(dx*uy-dy*ux)<=tol&&along>=furthest-tol&&along<=chord+tol;
+    furthest=Math.max(furthest,along);return aligned;
+   }))p=[start,end];
+  }
   const joined=smooth(p.length>128?sample(p,128):p,3),cumulative=[0];
   for(let i=1;i<joined.length;i++)cumulative.push(cumulative.at(-1)+distance(joined[i-1],joined[i]));
   const length=cumulative.at(-1);if(length<1e-6)return null;
@@ -21,8 +32,10 @@
  }
  function windPolyline(g,width){
   const steps=Math.max(5,Math.min(16,Math.ceil(g.length/4))),out=[],offset=Math.max(-width*.48,Math.min(width*.48,g.offset));
+  // A constant crosswind offset per glyph keeps straight runs parallel.
+  const bend=Math.abs(g.line.at(g.station+(g.direction||1)*g.length/2).bend),narrow=1/(1+bend*width),variation=(g.primary?.15:.7)*Math.sin(g.station/97+(g.lane||0)*1.17);
   for(let i=0;i<=steps;i++){
-   const station=g.station+(g.direction||1)*g.length*i/steps,a=g.line.at(station),narrow=1/(1+Math.abs(a.bend)*width),variation=(g.primary?.15:.7)*Math.sin(station/97+(g.lane||0)*1.17)*narrow,lateral=offset*narrow+variation;
+   const station=g.station+(g.direction||1)*g.length*i/steps,a=g.line.at(station),lateral=(offset+variation)*narrow;
    out.push([a.point[0]+a.normal[0]*lateral,a.point[1]+a.normal[1]*lateral]);
   }return out;
  }
