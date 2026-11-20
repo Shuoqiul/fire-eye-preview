@@ -28,6 +28,34 @@ try{
  const straight=await page.evaluate(()=>{const project=p=>fireEyePreview.map.project(p),arrows=fireEyeCounterfactual.visuals.windVectors.map(v=>v.points.map(project));return {width:fireEyeCounterfactual.event.radiusKm*2,span:Math.max(...arrows.map(a=>a[0].y))-Math.min(...arrows.map(a=>a[0].y)),aligned:arrows.every(a=>a.at(-1).x>a[0].x&&a.every(p=>Math.abs(p.y-a[0].y)<.1))};});
  assert.equal(straight.width,200);assert.ok(straight.span>72,'wide corridor retains outer lanes');assert.ok(straight.aligned,'wide outer arrows follow the drawn heading');
  await page.screenshot({path:directory+'/wind-straight-wide.png'});
+ await draw.click();
+ await page.mouse.move(773,755);await page.mouse.down();for(const p of [[970,460],[1130,670]])await page.mouse.move(...p,{steps:18});await page.mouse.up();
+ await page.getByRole('button',{name:'Confirm',exact:true}).click();
+ const bend=await page.evaluate(()=>{
+  const project=p=>fireEyePreview.map.project(p),arrows=fireEyeCounterfactual.visuals.windVectors.map(v=>v.points.map(project));
+  let maxKink=0;
+  for(const points of arrows){let last=null;for(let i=1;i<points.length;i++){
+   const u=[points[i].x-points[i-1].x,points[i].y-points[i-1].y];if(Math.hypot(...u)<.25)continue;
+   if(last)maxKink=Math.max(maxKink,Math.abs(Math.atan2(last[0]*u[1]-last[1]*u[0],last[0]*u[0]+last[1]*u[1])));
+   last=u;
+  }}
+  return {count:arrows.length,maxKink};
+ });
+ assert.ok(bend.count>20&&bend.maxKink<Math.PI/6,`wide acute bend stays smooth; largest segment kink: ${bend.maxKink} rad`);
+ const visible=await page.evaluate(async()=>{
+  const ctx=document.getElementById('cf-wind-animation').getContext('2d'),styles=new Set(),counts=new Set();
+  const begin=ctx.beginPath,move=ctx.moveTo,stroke=ctx.stroke;let arrows=0,headless=0,subpaths=0,calls=0;
+  ctx.beginPath=function(){subpaths=0;return begin.call(this);};
+  ctx.moveTo=function(...args){subpaths++;return move.apply(this,args);};
+  ctx.stroke=function(){styles.add(`${this.strokeStyle}|${this.globalAlpha}|${this.lineWidth}`);arrows++;calls++;if(subpaths!==2)headless++;return stroke.call(this);};
+  try{for(let i=0;i<45;i++){await new Promise(requestAnimationFrame);counts.add(calls);calls=0;}}
+  finally{ctx.beginPath=begin;ctx.moveTo=move;ctx.stroke=stroke;}
+  return {styles:[...styles],counts:[...counts],arrows,headless};
+ });
+ assert.ok(visible.arrows>45&&visible.counts.length>1,'staggered wind glyphs cycle on a wide bend');
+ assert.equal(visible.headless,0,'each drawn shaft carries its arrowhead');
+ assert.equal(visible.styles.length,1,'all animated lanes use the same color, opacity and stroke');
+ await page.screenshot({path:directory+'/wind-acute-bend.png'});
  await page.locator('[data-event="heavy_rain"]').click();await page.mouse.move(820,600);await page.mouse.down();await page.mouse.move(1050,660,{steps:15});await page.mouse.move(1010,760,{steps:10});await page.mouse.up();await page.getByRole('button',{name:'Confirm',exact:true}).click();
  assert.ok(await page.evaluate(()=>fireEyeCounterfactual.event.area.mask.some(Boolean)));
  await page.screenshot({path:directory+'/area-desktop.png'});

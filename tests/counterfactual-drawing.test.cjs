@@ -55,6 +55,21 @@ test('curved streamlines are longer and faster outside a bend',()=>{
  const inside=glyph(-20,1),outside=glyph(20,1),before=glyph(-20,-1),after=glyph(20,-1),length=curveLength,span=points=>Math.hypot(points.at(-1)[0]-points[0][0],points.at(-1)[1]-points[0][1]);
  assert.ok(length(outside)>length(inside));assert.ok(span(outside)>span(inside));assert.ok(inside.length>0&&outside.length>0);assert.ok(outside.some((p,i)=>i&&(p[0]!==outside[i-1][0]||p[1]!==outside[i-1][1])));
 });
+test('wide acute turns round individual shafts and reverse the inner and outer speeds with handedness',()=>{
+ for(const sign of [-1,1]){
+  const guide=g.sample([[0,0],[300,0],[435,sign*250]],48),field=g.windField(guide,200,undefined,27);
+  const atBend=lane=>field.find(v=>v.station===272&&v.lane===lane);
+  const inner=atBend(sign*48),center=atBend(0),outer=atBend(-sign*48);
+  assert.ok(inner&&center&&outer);
+  assert.ok(inner.arcLength<center.arcLength*.93&&outer.arcLength>center.arcLength*1.07);
+  assert.ok(inner.speedFactor<1&&outer.speedFactor>1);
+  assert.ok(curveLength(outer.points)>Math.hypot(...outer.vector)+.01,'outer shaft visibly arcs');
+  for(const a of field)for(let i=2;i<a.points.length;i++){
+   const p=a.points[i-2],q=a.points[i-1],r=a.points[i],ux=q[0]-p[0],uy=q[1]-p[1],vx=r[0]-q[0],vy=r[1]-q[1];
+   assert.ok(Math.abs(Math.atan2(ux*vy-uy*vx,ux*vx+uy*vy))<Math.PI/12);
+  }
+ }
+});
 test('wide straight guides keep every lane straight, parallel and positionally distinct',()=>{
  const guide=[[0,0],[1800,0]],denseGuide=g.sample(guide,48),jittered=denseGuide.map(([x,y],i)=>[x,y+(i>0&&i<47?Math.sin(i*2)*3:0)]);
  for(const path of [guide,denseGuide,jittered])for(const speed of [8,27,45,58]){

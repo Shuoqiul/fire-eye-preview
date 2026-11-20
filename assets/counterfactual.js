@@ -215,23 +215,23 @@
     const arcs=[0];for(let i=1;i<points.length;i++)arcs.push(arcs.at(-1)+Math.hypot(points[i][0]-points[i-1][0],points[i][1]-points[i-1][1]));
     const total=arcs.at(-1);if(!total)return;
     const start=frame.start*total,end=frame.end*total,trace=[];
+    if(end-start<Math.min(7,total*.60))return;
     for(let i=1;i<points.length;i++){
       const lo=Math.max(start,arcs[i-1]),hi=Math.min(end,arcs[i]),span=arcs[i]-arcs[i-1];if(hi<=lo||!span)continue;
       const at=v=>[points[i-1][0]+(points[i][0]-points[i-1][0])*(v-arcs[i-1])/span,points[i-1][1]+(points[i][1]-points[i-1][1])*(v-arcs[i-1])/span];
       if(!trace.length)trace.push(at(lo));trace.push(at(hi));
     }
     if(trace.length<2)return;ctx.beginPath();ctx.moveTo(...trace[0]);for(const p of trace.slice(1))ctx.lineTo(...p);
-    if(frame.head){const q=trace.at(-1),p=trace.at(-2),angle=Math.atan2(q[1]-p[1],q[0]-p[0]),head=Math.min(5.5,total*.23,(end-start)*.5);
-      ctx.moveTo(q[0]-head*Math.cos(angle-.42),q[1]-head*Math.sin(angle-.42));ctx.lineTo(...q);ctx.lineTo(q[0]-head*Math.cos(angle+.42),q[1]-head*Math.sin(angle+.42));
-    }ctx.stroke();
+    const q=trace.at(-1),p=trace.at(-2),angle=Math.atan2(q[1]-p[1],q[0]-p[0]),head=Math.min(6,Math.max(2,total*.23),(end-start)*.72);
+    ctx.moveTo(q[0]-head*Math.cos(angle-.47),q[1]-head*Math.sin(angle-.47));ctx.lineTo(...q);ctx.lineTo(q[0]-head*Math.cos(angle+.47),q[1]-head*Math.sin(angle+.47));
+    ctx.stroke();
   }
   function animate(time){
     if(!state.open)return;motionFrame(time);const map=S().map,canvas=$('cf-wind-animation');if(canvas){const dpr=Math.min(devicePixelRatio,2),rect=map.getContainer().getBoundingClientRect();if(canvas.width!==Math.round(rect.width*dpr)||canvas.height!==Math.round(rect.height*dpr)){canvas.width=Math.round(rect.width*dpr);canvas.height=Math.round(rect.height*dpr);}const ctx=canvas.getContext('2d');ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,rect.width,rect.height);const reduced=matchMedia('(prefers-reduced-motion: reduce)').matches;
-      ctx.lineCap='round';ctx.lineJoin='round';
+      ctx.lineCap='round';ctx.lineJoin='round';ctx.strokeStyle='#174c40';ctx.globalAlpha=.82;ctx.lineWidth=1.65;
       for(const arrow of windArrows){
         const frame=reduced?{visible:true,start:0,end:1,head:true}:FireDrawing.windFrame(time,arrow.phase);if(!frame.visible)continue;
         const points=arrow.points.map(p=>{const q=map.project(p);return[q.x,q.y];});
-        ctx.strokeStyle=arrow.major?'#174c40':'#386e60';ctx.globalAlpha=arrow.major?.82:.54;ctx.lineWidth=arrow.major?1.8:1.15;
         drawWindCurve(ctx,points,frame);
       }
       ctx.globalAlpha=1;
