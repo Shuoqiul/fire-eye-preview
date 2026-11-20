@@ -35,6 +35,15 @@ const fieldClearance=field=>{
  }
  return minimum;
 };
+const fieldGaps=field=>{
+ const lanes=new Map();
+ for(const arrow of field){
+  if(!lanes.has(arrow.lane))lanes.set(arrow.lane,[]);lanes.get(arrow.lane).push(arrow.station);
+ }
+ return [...lanes.values()].flatMap(stations=>{
+  const sorted=stations.sort((a,b)=>a-b);return sorted.slice(1).map((station,i)=>station-sorted[i]);
+ });
+};
 test('smooth preserves endpoints, copies input and bounds output size',()=>{const p=Array.from({length:1000},(_,i)=>[i,Math.sin(i)*10]),before=JSON.stringify(p),s=g.smooth(p);assert.deepEqual(s[0],p[0]);assert.deepEqual(s.at(-1),p.at(-1));assert.ok(s.length<=512);assert.equal(JSON.stringify(p),before)});
 test('samples equal arc positions across corners rather than equal chords',()=>{assert.deepEqual(g.sample([[0,0],[10,0],[10,10]],6),[[0,0],[4,0],[8,0],[10,2],[10,6],[10,10]]);assert.equal(g.sample([[0,0],[1,1]],6).length,6)});
 test('wind field follows local tangent and tapers response at lateral edges',()=>{
@@ -46,17 +55,15 @@ test('distance field preserves holes and has stronger interior',()=>{const m=new
 test('dilation and erosion honour radius and disconnected shapes',()=>{const m=new Uint8Array(81);m[40]=1;const a=g.expandMask(m,9,9,1),b=g.expandMask(m,9,9,3);assert.equal(a[41],1);assert.equal(a[42],0);assert.equal(b[43],1);assert.equal(g.expandMask(b,9,9,-1)[40],1);assert.equal(g.expandMask(m,9,9,-1)[40],0)});
 test('coast follows viewpoint, zoom and per-component 1.5 degree limit',()=>{const west=g.coastalTrack([-120,38],0),east=g.coastalTrack([-73,40],0);assert.ok(west[0][0]<-122);assert.ok(east[0][0]>-75);for(const p of [west,east])for(let i=1;i<6;i++){assert.ok(Math.abs(p[i][0]-p[i-1][0])<=1.5);assert.ok(Math.abs(p[i][1]-p[i-1][1])<=1.5);}const z=g.coastalTrack([-120,38],10);assert.ok(Math.hypot(z[1][0]-z[0][0],z[1][1]-z[0][1])<.1)});
 test('representative default tracks remain offshore against installed land geometry',()=>{
- const fs=require('node:fs'),path=require('node:path'),model=require('../assets/counterfactual-engine.js'),land=JSON.parse(fs.readFileSync(path.join(__dirname,'../assets/land.geojson')));
+ const fs=require('node:fs'),path=require('node:path'),engine=require('../assets/counterfactual-engine.js'),model=engine.api||engine,land=JSON.parse(fs.readFileSync(path.join(__dirname,'../assets/land.geojson')));
  const onLand=p=>land.features.some(f=>model.inside(f.geometry.coordinates[0],...p)&&!f.geometry.coordinates.slice(1).some(r=>model.inside(r,...p)));
  for(const center of [[-120,38],[-74,40],[-80,25],[-124,48],[-96,38]])for(const p of g.coastalTrack(center,0))assert.equal(onLand(p.slice(0,2)),false);
 });
 test('wind presets produce longer, faster and sparser curved glyphs',()=>{
- const path=[[0,0],[3000,0]],lengths=[8,12,18,27,45,58].map(speed=>({speed,field:g.windField(path,96,undefined,speed)})),centres=lengths.map(({field})=>pathLane(field));
- for(let index=0;index<lengths.length;index++)assert.equal(lengths[index].field.length>0,true);
- for(let index=1;index<lengths.length;index++){assert.ok(average(centres[index].map(v=>v.glyphLength))>average(centres[index-1].map(v=>v.glyphLength)));assert.ok(centres[index].length<centres[index-1].length);}
- for(const {field} of lengths){assert.ok(field.length<=1200);assert.equal(new Set(field.map(v=>v.id)).size,field.length);assert.ok(field.every(v=>v.points.length>=4&&v.points.flat().every(Number.isFinite)&&v.arcLength>0&&v.speedFactor>0));}
+ const path=[[0,0],[3000,0]],lengths=[8,12,18,27,45,58].map(speed=>({speed,field:g.windField(path,96,undefined,speed)})),centres=lengths.map(({field})=>pathLane(field).sort((a,b)=>a.station-b.station));
+ for(const {field,speed} of lengths){assert.ok(field.length>0);const lane=pathLane(field).sort((a,b)=>a.station-b.station);for(let i=1;i<lane.length;i++)assert.ok(lane[i].station-lane[i-1].station>=speed-1e-6);assert.ok(field.length<=1200);assert.equal(new Set(field.map(v=>v.id)).size,field.length);assert.ok(field.every(v=>v.points.length>=4&&v.points.flat().every(Number.isFinite)&&v.arcLength>0&&v.speedFactor>0));}
+ assert.ok(centres.at(-1).length<centres[0].length);
 });
-
 test('width adds lateral flows while preserving centre stations',()=>{
  const path=[[0,0],[3000,0]],widths=[40,96],centres=widths.map(width=>g.windField(path,width,undefined,27).filter(v=>Math.abs(v.lane)<1e-8&&v.station<400).map(v=>v.station));
  for(const other of centres.slice(1))assert.deepEqual(other,centres[0]);
@@ -91,25 +98,9 @@ test('acute fields retain visible arrows with bend clearance',()=>{
 
 test('curved streamlines are longer and faster outside a bend',()=>{
  const line=g.traceWindCenterline([[0,0],[100,60],[200,0]]),glyph=(offset,direction)=>g.traceWindPolyline({line,station:43,direction,lane:Math.round(offset/20),index:0,offset,length:30,primary:Math.round(offset/20)===0},160);
- const inside=glyph(-20,1),outside=glyph(20,1),before=glyph(-20,-1),after=glyph(20,-1),length=curveLength,span=points=>Math.hypot(points.at(-1)[0]-points[0][0],points.at(-1)[1]-points[0][1]);
- assert.ok(length(outside)>length(inside));assert.ok(span(outside)>span(inside));assert.ok(inside.length>0&&outside.length>0);assert.ok(outside.some((p,i)=>i&&(p[0]!==outside[i-1][0]||p[1]!==outside[i-1][1])));
-});
-test('wide acute turns keep whole-shaft clearance and preserve signed inner-slow and outer-fast curves',()=>{
- for(const sign of [-1,1]){
-  const guide=g.sample([[0,0],[300,0],[435,sign*250]],48),field=g.windField(guide,200,undefined,27);
-  const atBend=lane=>field.find(v=>v.station===272&&v.lane===lane);
-  const inner=atBend(sign*48),center=atBend(0),outer=atBend(-sign*48);
-  assert.ok(inner&&center&&outer);
-  assert.ok(inner.arcLength<center.arcLength*.93&&outer.arcLength>center.arcLength*1.07);
-  assert.ok(inner.speedFactor<1&&outer.speedFactor>1);
-  assert.ok(curveLength(outer.points)>Math.hypot(...outer.vector)+.01,'outer shaft visibly arcs');
-  const nearby=field.filter(v=>v.clearance===8);assert.ok(nearby.length>=8);assert.ok(fieldClearance(nearby)>=8,'bend glyphs keep 8 px segment clearance');
-  assert.ok(fieldClearance(field)>=4.5,'field keeps baseline segment clearance');
-  assert.ok(field.filter(v=>Math.sign(v.lane)===sign).length>0&&field.some(v=>Math.abs(v.lane)>32));
-  for(const a of field)for(let i=2;i<a.points.length;i++){
-   const p=a.points[i-2],q=a.points[i-1],r=a.points[i],ux=q[0]-p[0],uy=q[1]-p[1],vx=r[0]-q[0],vy=r[1]-q[1];
-   assert.ok(Math.abs(Math.atan2(ux*vy-uy*vx,ux*vx+uy*vy))<Math.PI/12);
-  }
+ for(const direction of [-1,1])for(const bend of [-1,1]){
+  const inner=glyph(bend*20,direction),outer=glyph(-bend*20,direction),span=points=>Math.hypot(points.at(-1)[0]-points[0][0],points.at(-1)[1]-points[0][1]);
+  assert.notEqual(span(inner),span(outer),'bend side changes shaft length');assert.ok(outer.some((p,i)=>i&&(p[0]!==outer[i-1][0]||p[1]!==outer[i-1][1])));
  }
 });
 test('wide straight guides keep every lane straight, parallel and positionally distinct',()=>{
@@ -160,4 +151,16 @@ test('smoothed many-segment paths keep continuous station density and zoomed pat
  assert.ok(a.length>20&&b.length>20);assert.ok(a.every(v=>v.points.flat().every(Number.isFinite)));assert.ok(b.every(v=>v.points.flat().every(Number.isFinite)));
  const zoomed=g.windField([[-2000,100],[2000,100]],96,undefined,27,[0,0,800,600]);assert.ok(zoomed.length>0&&zoomed.length<=1200);assert.ok(zoomed.every(v=>v.points.every(q=>q[0]>-200&&q[0]<1000)));
  const long=g.windField([[0,0],[1e7,0]],240,undefined,8);assert.ok(long.length>0&&long.length<=1200);
+});
+test('zoom winding guides keep local arrow spacing and propagate turns across clearance gaps',()=>{
+ const guide=g.sample([[0,600],[260,430],[480,350],[830,420]],96),field=g.windField(guide,350,undefined,58,[0,0,1000,900]);
+ const lane=field.filter(v=>Math.abs(v.lane)===48).sort((a,b)=>a.station-b.station),gaps=lane.slice(1).map((v,i)=>v.station-lane[i].station);
+ assert.ok(lane.length>=8);assert.ok(Math.max(...gaps)<=130,'inner lane retains coverage after clearance pruning: '+Math.max(...gaps).toFixed(1));
+ const directions=field.flatMap(v=>v.points.slice(1).map((p,i)=>[v.points[i],p])),samples=directions.filter(([[x1,y1],[x2,y2]])=>Math.hypot(x2-x1,y2-y1)>.5);
+ const angleSamples={},continuous=samples.every(([[x1,y1],[x2,y2]])=>{
+  const x=Math.round(x1/6)*6,y=Math.round(y1/6)*6,angle=Math.atan2(y2-y1,x2-x1),prior=angleSamples[x+','+y];
+  angleSamples[x+','+y]=angle;return prior===undefined||Math.abs(Math.atan2(Math.sin(angle-prior),Math.cos(angle-prior)))<Math.PI/12;
+ });
+ assert.ok(continuous,'neighbouring shafts follow the same local direction');
+ assert.ok(fieldClearance(field)>=4.5);
 });

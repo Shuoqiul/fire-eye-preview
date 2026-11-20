@@ -47,7 +47,7 @@
   }
 
   function lightningSvg(color) {
-    return svg('cf-lightning', `<path fill="${colorOf(color)}" d="${LIGHTNING_PATH}"/>`);
+    return svg('cf-lightning', `<path class="cf-lightning-silhouette" fill="${colorOf(color)}" d="${LIGHTNING_PATH}"/>`);
   }
 
   function rainSvg(drops, color) {
@@ -63,9 +63,10 @@
     for (let i = 0; i < count; i += 1) {
       const row = Math.floor(i / columns), inRow = Math.min(columns, count - row * columns);
       const x = 12 + ((i % columns) - (inRow - 1) / 2) * spacing, y = 18 + row * rowHeight;
-      markup += `<path data-drop="${i + 1}" transform="translate(${x.toFixed(2)} ${y.toFixed(2)}) scale(${scale.toFixed(3)})" d="${DROP_PATH}"/>`;
+      const delay = (-(i % Math.max(1, Math.min(12, count))) * .16).toFixed(2);
+      markup += `<g class="cf-rain-drop" data-drop="${i + 1}" style="animation-delay:${delay}s"><path transform="translate(${x.toFixed(2)} ${y.toFixed(2)}) scale(${scale.toFixed(3)})" d="${DROP_PATH}"/></g>`;
     }
-    return svg('cf-rainstorm', `<g fill="${colorOf(color)}"><path d="${CLOUD_PATH}"/>${markup}</g>`, height);
+    return svg('cf-rainstorm', `<g fill="${colorOf(color)}" class="cf-rain-cloud-poses"><g class="cf-rain-cloud cf-rain-cloud-0"><path class="cf-rain-cloud-outline" d="${CLOUD_PATH}"/></g><g class="cf-rain-cloud cf-rain-cloud-1"><path class="cf-rain-cloud-outline" d="${CLOUD_PATH}"/></g><g class="cf-rain-cloud cf-rain-cloud-2"><path class="cf-rain-cloud-outline" d="${CLOUD_PATH}"/></g><g class="cf-rain-drops">${markup}</g></g>`, height);
   }
 
   function intensity(vmaxKt) {

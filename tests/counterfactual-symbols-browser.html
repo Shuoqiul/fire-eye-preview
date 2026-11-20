@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Counterfactual symbol fixture</title>
+  <link rel="stylesheet" href="../assets/counterfactual.css">
+</head>
+<body>
+  <div class="cf-lightning-marker" id="lightning"></div>
+  <div class="cf-rain-marker" id="rain"></div>
+  <script src="../assets/counterfactual-symbols.js"></script>
+  <script>
+    document.getElementById('lightning').innerHTML = FireWeatherSymbols.lightningSvg('currentColor');
+    document.getElementById('rain').innerHTML = FireWeatherSymbols.rainSvg(4, 'currentColor');
+  </script>
+</body>
+</html>

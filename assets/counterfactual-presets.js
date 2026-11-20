@@ -28,28 +28,37 @@
    return {land,distanceKm};
   };
  }
- function weakenTrack(track,vmax,classify=()=>({land:false,distanceKm:Infinity})){
+function weakenTrack(track,vmax,classify=()=>({land:false,distanceKm:Infinity}),{manual=false}={}){
+ const environment=p=>classify(p.slice(0,2));
+  const dissipate=wind=>wind<5?0:wind;
+  const landAttenuation=(site,hours)=>Math.exp(-.19*hours-Math.max(0,site.distanceKm||0)/115);
   let wind=vmax,overLand=false;return track.map((point,i)=>{
+   const site=environment(point);
+   if(!i&&site.land){overLand=true;wind*=landAttenuation(site,1);}
    if(i){const a=track[i-1];for(let hour=0;hour<12;hour++){
     const t=(hour+.5)/12,position=[a[0]+(point[0]-a[0])*t,a[1]+(point[1]-a[1])*t],coast=classify(position);
     if(coast.land){
-     const mix=Math.max(0,Math.min(1,(Math.abs(position[1])-36)/4)),background=26.7+2.9*mix,alpha=.095+(.183-.095)*mix;
-     if(wind>background){if(!overLand)wind=Math.max(background,.9*wind);wind=background+(wind-background)*Math.exp(-alpha);}
+    if(!overLand)wind*=.9;
+     wind*=Math.exp(-(.14+.12*(1-Math.exp(-Math.max(0,coast.distanceKm||0)/85))));
     }else wind*=Math.exp(-(.002+.016*Math.exp(-Math.max(0,coast.distanceKm)/60)));
     overLand=coast.land;
-   }}
+   }
+    if(site.land)wind=Math.min(wind,vmax*landAttenuation(site,0));
+    else if(manual&&!overLand)wind=point[2];
+   }
+   wind=dissipate(manual?Math.min(wind,point[2]):wind);
    return [point[0],point[1],wind];
   });
  }
 
  function apply(event,recipe=groups[event.type][defaultIndex[event.type]],classify){
   const {vmax,...drivers}=recipe[1],next={...event,...drivers,startH:0,durationH:24};
-  if(vmax!=null)next.track=weakenTrack(event.track,vmax,classify);
+  if(vmax!=null){next.cyclonePresetKt=vmax;next.track=weakenTrack(event.track,vmax,classify);}
   return next;
  }
- function matches(event,recipe){return Object.entries(recipe[1]).every(([key,value])=>Math.abs((key==='vmax'?event.track?.[0]?.[2]:event[key])-Number(value))<1e-8);}
+ function matches(event,recipe){return Object.entries(recipe[1]).every(([key,value])=>Math.abs((key==='vmax'?(event.cyclonePresetKt??event.track?.[0]?.[2]):event[key])-Number(value))<1e-8);}
  // The shadow is a visual envelope, independent of track length or other points' wind.
- function shadowRadius(vmaxKt){return 8+Math.max(0,vmaxKt)*.9;}
+ function shadowRadius(vmaxKt){return 2+Math.max(0,vmaxKt)*.9+6*Math.min(1,Math.max(0,vmaxKt)/10);}
  const api={groups,defaultIndex,coastIndex,weakenTrack,apply,matches,shadowRadius};
  if(typeof module==='object'&&module.exports)module.exports=api;else root.FirePresets=api;
 })(typeof window==='undefined'?globalThis:window);

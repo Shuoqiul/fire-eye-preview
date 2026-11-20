@@ -159,8 +159,7 @@
   }
   function areaAt(area,point){
     const b=area.bounds,x=(point[0]-b[0])/(b[2]-b[0])*area.width,y=(mercY(point[1])-mercY(b[3]))/(mercY(b[1])-mercY(b[3]))*area.height;
-    if(x<0||y<0||x>=area.width||y>=area.height)return 0;
-    return areaField(area)[Math.floor(y)*area.width+Math.floor(x)];
+    return x<0||y<0||x>=area.width||y>=area.height?0:areaField(area)[Math.floor(y)*area.width+Math.floor(x)];
   }
   function normalize(event) {
     if (!event || typeof event !== 'object' || !TYPES.includes(event.type)) {
@@ -187,6 +186,7 @@
     }
     if (event.landfallHours != null) n.landfallHours = event.landfallHours;
     if (event.type === 'hurricane') {
+      if(inRange(event.cyclonePresetKt,0,300))n.cyclonePresetKt=event.cyclonePresetKt;
       if (!Array.isArray(event.track) || (event.track.length < 2 || event.track.length > 64)) {
         throw new Error('Provide at least two valid hurricane track points.');
       }
@@ -328,6 +328,7 @@
       const landWind=a[2]+(b[2]-a[2])*fraction,landLat=a[1]+(b[1]-a[1])*fraction;
       vmax=Math.min(vmax,decayedWind(landWind,landLat,leadHours-e.landfallHours));
     }
+    if(vmax<=0)return {offTrack:true,lon:NaN,lat:NaN,vmax:0};
     return {
       lon: a[0] * (1 - t) + b[0] * t,
       lat,

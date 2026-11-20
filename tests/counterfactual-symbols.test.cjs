@@ -39,6 +39,8 @@ test('lightning uses a broad angular bolt path and no enclosing frame', () => {
   const result = symbols.lightningSvg('#eed008');
   assert.match(result, svgOpen);
   assert.match(result, /class="cf-lightning"/);
+  assert.match(result, /class="cf-lightning-silhouette"/);
+  assert.match(result, /d="M11\.15 1H21\.58/);
   assert.match(result, /fill="#eed008"/);
   assert.ok((result.match(/[HL]/g) || []).length >= 9, 'stepped silhouette includes three shoulders');
   assert.doesNotMatch(result, /<rect|<image|background|<text/i);
@@ -49,8 +51,12 @@ test('rain SVG exposes exactly the requested drop count below a single cloud', (
     const result = symbols.rainSvg(count, 'currentColor');
     assert.match(result, svgOpen);
     assert.match(result, /class="cf-rainstorm"/);
-    assert.equal([...result.matchAll(/data-drop="\d+"/g)].length, count);
-    assert.equal([...result.matchAll(/<path /g)].length, count + 1);
+    assert.deepEqual([...result.matchAll(/class="cf-rain-cloud cf-rain-cloud-(\d)"/g)].map(match => match[1]), ['0', '1', '2']);
+    assert.equal([...result.matchAll(/class="cf-rain-cloud-outline" d="M1 10/g)].length, 3);
+    assert.match(result, /class="cf-rain-drops"/);
+    assert.equal([...result.matchAll(/class="cf-rain-drop" data-drop="\d+"/g)].length, count);
+    assert.deepEqual([...result.matchAll(/data-drop="(\d+)" style="animation-delay:(-?\d+\.\d+)s"/g)].map(match => match[2]), Array.from({length: count}, (_, i) => (-(i % Math.max(1, Math.min(12, count))) * .16).toFixed(2)));
+    assert.equal([...result.matchAll(/<path /g)].length, count + 3);
     assert.match(result, /fill="currentColor"/);
     assert.doesNotMatch(result, /<rect|<image|background|<text/i);
   }

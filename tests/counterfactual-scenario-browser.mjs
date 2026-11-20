@@ -1,0 +1,52 @@
+const {chromium}=await import(process.env.CF_PLAYWRIGHT_MODULE||'../../cf-app/node_modules/playwright/index.mjs');
+import assert from 'node:assert/strict';
+const base=process.env.CF_URL||'http://127.0.0.1:5211',browser=await chromium.launch({headless:true,...(process.env.CF_CHROMIUM?{executablePath:process.env.CF_CHROMIUM}:{})}),page=await browser.newPage({viewport:{width:1440,height:960},reducedMotion:'reduce'}),errors=[];
+page.on('pageerror',e=>errors.push(e.message));
+try {
+ await page.route('**/*',r=>new URL(r.request().url()).origin===new URL(base).origin?r.continue():r.abort());
+ await page.goto(base);await page.waitForFunction(()=>window.fireEyePreview?.ready,null,{timeout:60000});
+ await page.evaluate(()=>fireEyeCounterfactual.open());
+ await page.locator('[data-event="heavy_rain"]').click();
+ await page.mouse.move(900,540);await page.mouse.down();await page.mouse.move(1030,540,{steps:12});await page.mouse.up();
+ const previous=await page.evaluate(()=>fireEyePreview.map.getZoom());
+ await page.mouse.move(1020,560);await page.mouse.wheel(0,-350);
+ await page.waitForFunction(z=>fireEyePreview.map.getZoom()>z+.1,previous);
+ await page.waitForFunction(()=>!fireEyePreview.map.isMoving());
+ const paintedSample=await page.evaluate(()=>fireEyePreview.map.unproject([950-24,540-74]).toArray());
+ await page.getByRole('button',{name:'Confirm',exact:true}).click();
+ const painted=await page.evaluate(worldPoint=>{
+  const map=fireEyePreview.map,area=fireEyeCounterfactual.event.area,b=area.bounds,center=[(b[0]+b[2])/2,(b[1]+b[3])/2],point=map.project(worldPoint),source=map.getSource('cf-area'),canvas=source.getCanvas(),width=canvas.width,height=canvas.height,merc=lat=>(1-Math.log(Math.tan(Math.PI/4+lat*Math.PI/360))/Math.PI)/2,x=(worldPoint[0]-b[0])/(b[2]-b[0])*width,y=(merc(worldPoint[1])-merc(b[3]))/(merc(b[1])-merc(b[3]))*height,rgba=canvas.getContext('2d').getImageData(Math.min(width-1,Math.floor(x)),Math.min(height-1,Math.floor(y)),1,1).data;
+  return {area:FireCounterfactual.areaAt(area,center),sample:FireCounterfactual.areaAt(area,worldPoint),alpha:rgba[3],zoom:map.getZoom(),point:[point.x,point.y],inside:point.x>0&&point.x<map.getContainer().clientWidth&&point.y>0&&point.y<map.getContainer().clientHeight};
+ },paintedSample);
+ assert.ok(painted.area>.1&&painted.sample>.1&&painted.alpha>0&&painted.inside,'confirmed painted area keeps its fixed geographic sample and visible pixels after wheel zoom');
+ assert.equal(await page.getByRole('button',{name:'Run scenario',exact:true}).count(),1);
+ const response=await page.evaluate(async()=>{const api=fireEyeCounterfactual;const result=await api.run();return {available:result?.available,span:result?.span,state:api.state.status,view:api.state.view,base:fireEyePreview.riskVisible};});
+ assert.ok(response.available&&response.span>0,response.state);
+ assert.equal(response.view,'scenario');assert.equal(response.base,true);
+ assert.equal(await page.getByRole('button',{name:'ISI scenario'}).getAttribute('aria-pressed'),'true');
+ const image=await page.evaluate(()=>fireEyePreview.map.getSource('cf-result-image').serialize().url);
+ const imageData=Buffer.from(image.split(',')[1],'base64');
+ const surface=await page.evaluate(async(url)=>{
+  const map=fireEyePreview.map,img=new Image();img.src=url;await img.decode();
+  const canvas=document.createElement('canvas');canvas.width=img.width;canvas.height=img.height;const ctx=canvas.getContext('2d');ctx.drawImage(img,0,0);
+  const rgba=ctx.getImageData(0,0,img.width,img.height).data,levels=new Set();for(let i=3;i<rgba.length;i+=4)levels.add(rgba[i]);
+  const outside=FireCounterfactual.areaAt(fireEyeCounterfactual.event.area,[-130,38]);
+  return {width:canvas.width,height:canvas.height,min:Math.min(...levels),max:Math.max(...levels),levels:levels.size,visibility:map.getLayoutProperty('cf-result-raster','visibility'),outside,outsideView:document.querySelector('#cf-results').textContent.includes('Outside the scenario: published fire-activity score')};
+ },image);
+ assert.ok(imageData.length>0);assert.equal(surface.visibility,'visible');assert.ok(surface.min===0&&surface.max>180&&surface.levels>12,JSON.stringify(surface));
+ assert.equal(surface.outside,0);assert.equal(surface.outsideView,true,'outside-scenario raster scale remains published fire-activity score');
+ const scenarioLegend=await page.locator('.cf-legend-bar').evaluate(el=>({styles:[...getComputedStyle(el).backgroundImage.matchAll(/\b\d{1,3},\s*\d{1,3},\s*\d{1,3}\b/g)].map(m=>m[0].replace(/\s+/g,'')),outside:el.parentElement.textContent.includes('Outside the scenario: published fire-activity score'),riskVisible:fireEyePreview.riskVisible}));assert.deepEqual(scenarioLegend.styles,['237,244,223','157,198,107','224,180,51','169,47,43']);assert.equal(scenarioLegend.outside,true);assert.equal(scenarioLegend.riskVisible,true);
+ await page.screenshot({path:'/tmp/cf-scenario-feathered.png'});
+ await page.locator('[data-event="thunderstorm"]').click();await page.keyboard.press('Escape');
+ const dry=await page.evaluate(async()=>{const api=fireEyeCounterfactual,r=await api.run();return {available:r.available,rain:api.event.rainIn,deltaShown:document.querySelector('#cf-results').textContent.includes('Rain-driven change not shown'),views:[...document.querySelectorAll('.cf-view')].map(b=>b.textContent),referenceButton:!![...document.querySelectorAll('.cf-view')].find(b=>b.textContent==='Published reference')};});
+ assert.equal(await page.getByRole('button',{name:'ISI change'}).count(),0);
+ assert.equal(dry.rain,0);assert.equal(dry.available,true);assert.equal(dry.deltaShown,true);assert.deepEqual(dry.views,['ISI baseline','ISI scenario','Published reference']);assert.equal(dry.referenceButton,true);
+ await page.getByRole('button',{name:'Published reference'}).click();assert.ok(await page.locator('.cf-retained-reference').count()===1);assert.match(await page.locator('.cf-retained-reference').textContent(),/Retained published fire-activity score/);
+ await page.getByRole('button',{name:'ISI scenario'}).click();assert.equal(await page.getByRole('button',{name:'ISI scenario'}).getAttribute('aria-pressed'),'true');
+ await page.locator('[data-event="prescribed_burn"]').click();await page.keyboard.press('Escape');await page.evaluate(()=>fireEyeCounterfactual.run());
+ assert.equal(await page.evaluate(()=>fireEyeCounterfactual.state.view),'published');assert.equal(await page.locator('.cf-view').count(),1);assert.equal(await page.getByRole('button',{name:'Published reference'}).getAttribute('aria-pressed'),'true');assert.match(await page.locator('#cf-unavailable-reason').textContent(),/Fuel-state treatment rules/);assert.ok(await page.locator('.cf-retained-reference').count()===1);assert.match(await page.locator('.cf-retained-reference').textContent(),/Retained published fire-activity score/);
+ await page.evaluate(()=>{const api=fireEyeCounterfactual,e=api.defaults('hurricane');e.track=[[-76,32,70],[-78,33,69],[-82,35,68],[-85,36,67],[-89,37,66],[-96,38,65]];e.center=e.track[0].slice(0,2);api.setEvent(e);});
+ const cyclone=await page.evaluate(()=>({speeds:fireEyeCounterfactual.event.track.map(p=>p[2]),markers:[...document.querySelectorAll('.cf-cyclone-marker')].map(p=>[p.title,p.style.color]),radius:FirePresets.shadowRadius(0)}));assert.ok(cyclone.radius===2&&cyclone.markers.some(([title,color])=>title.includes('Dissipated')&&color==='rgb(122, 125, 128)'));
+ await page.evaluate(()=>fireEyeCounterfactual.close());assert.equal(await page.evaluate(()=>fireEyePreview.map.getStyle().layers.filter(x=>x.id.startsWith('cf-')).length),0);assert.deepEqual(errors,[]);
+ console.log('Georeferenced brush zoom, default scenario, Gaussian display alpha, dry thunder and inland cyclone PASS',base);
+}finally{await browser.close();}

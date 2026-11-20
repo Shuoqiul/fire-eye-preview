@@ -26,6 +26,30 @@ test('only a narrow outer edge ripples with bounded local, cyclic variation',()=
  const near=motion.contour(4.49,12,14,3,16);assert.ok(Math.abs(near-4.49)<.001);
  assert.throws(()=>motion.contour(0,0,0,NaN,10));assert.throws(()=>motion.contour(0,0,0,1,0));
 });
+test('interior folds animate coherently while centre and deepest core stay anchored',()=>{
+ for(const max of [2,16,64]){const width=max*.035,inner=Math.max(width*2,.8);for(let key=0;key<24;key++)for(const [x,y] of [[0,0],[12,17],[-23,9]]){
+  for(const d of [-max*2,-max,-max*.7,0,inner])assert.ok(Math.abs(motion.interiorContour(d,x,y,key,max,width)-d)<1e-10);
+  assert.equal(motion.interiorContour(max,x,y,key,max,width),max);
+  assert.ok(Math.abs(motion.interiorContour(inner+1e-9,x,y,key,max,width)-inner-1e-9)<1e-10);
+ }
+ }
+ const values=[];for(let key=0;key<24;key++)for(let x=-24;x<=24;x+=4){values.push(motion.interiorContour(2.4,x,3,key,24,.84));}
+ assert.ok(Math.max(...values)-Math.min(...values)>1);assert.ok(Math.max(...values.map(v=>Math.abs(v-2.4)))<4);
+ assert.equal(motion.interiorContour(2.4,2,4,0,24,.84),motion.interiorContour(2.4,2,4,24,24,.84));
+ assert.equal(motion.interiorContour(2.4,2,4,0,24,.84),motion.interiorContour(2.4,2,4,-24,24,.84));
+ const before=motion.interiorContour(2.4,2,4,23.99,24,.84),after=motion.interiorContour(2.4,2,4,.01,24,.84);assert.ok(Math.abs(before-after)<.01);
+ assert.equal(motion.interiorContour(2.4,2,4,.01,24,.84),motion.interiorContour(2.4,2,4,.01,24,.84));
+ assert.throws(()=>motion.interiorContour(0,0,0,0,10,-1));assert.throws(()=>motion.interiorContour(0,0,0,0,10,11));
+});
+test('interior area bands move with the outer phase and scale to the event',()=>{
+ for(const max of [16,64]){const width=max*.035,sourceDistance=width*2,strength=.25+.75*sourceDistance/max,outer=max*.25;
+  for(const fraction of [.11,.33]){const distance=Math.min(max*.5,outer*(.25+.75*fraction)),samples=[];
+   for(let x=-20;x<=20;x+=4)for(let y=-12;y<=12;y+=4)samples.push(motion.interiorContour(distance,x,y,7,max,width)-distance);
+   assert.ok(sourceDistance<outer);assert.ok(strength>.25);assert.equal(motion.interiorContour(sourceDistance,2,4,7,max,width),sourceDistance);
+   assert.ok(Math.max(...samples.map(Math.abs))>.003);assert.ok(Math.max(...samples.map(Math.abs))<.13*max);
+  }
+ }
+});
 test('painted events preserve expert timing and cloud activity metadata',()=>{
  for(const type of ['heavy_rain','thunderstorm','prescribed_burn']){const e=model.defaults(type,[-96,38]);e.startH=24;e.area={width:3,height:3,bounds:[-97,37,-95,39],mask:[0,0,0,0,1,0,0,0,0]};e.motion={direction:135,speed:12};const n=model.normalize(e);assert.equal(n.startH,24);assert.deepEqual(n.motion,{speed:12});}
 });

@@ -25,7 +25,16 @@
 .cf-brush-tools{position:fixed;z-index:15;bottom:16px;left:50%;transform:translateX(-50%);padding:12px;max-width:calc(100vw - 24px);display:flex;gap:8px;flex-wrap:wrap}.cf-brush-tools p{flex-basis:100%;font-size:11px}.cf-brush-tools button{border:1px solid var(--line);border-radius:5px;padding:8px 12px;background:#f3f7f3}.cf-brush-tools button[aria-pressed=true]{background:var(--green);color:white}.cf-brush-sizes{display:flex;gap:15px;flex-basis:100%}.cf-brush-sizes label{display:flex;gap:5px;align-items:center}.cf-brush-sizes input{width:95px}
 @media(prefers-reduced-motion:reduce){.cf-cyclone-spin{animation:none}}
 
-.cf-weather-marker{background:transparent!important;pointer-events:none;filter:drop-shadow(0 0 .6px #ffffff)}.cf-weather-marker svg{display:block;width:100%;height:100%}.cf-lightning-marker{width:18px;height:23px;color:#6d28a8}.cf-rain-marker{width:28px;height:30px;color:#075fa8}
+.cf-weather-marker{background:transparent!important;pointer-events:none;filter:drop-shadow(0 0 .6px #ffffff)}.cf-weather-marker svg{display:block;width:100%;height:100%;overflow:visible}.cf-lightning-marker{width:18px;height:23px;color:#6d28a8}.cf-rain-marker{width:28px;height:30px;color:#075fa8}
+.cf-lightning-marker .cf-lightning-silhouette{transform-box:fill-box;transform-origin:50% 0;animation:cf-lightning-reveal 2.6s cubic-bezier(.25,.75,.35,1) infinite}
+.cf-rain-cloud{opacity:1;animation:cf-rain-pose 3.3s step-end infinite;transform-box:fill-box;transform-origin:50% 100%}
+.cf-rain-cloud-0{animation-delay:0s}.cf-rain-cloud-1{animation-delay:1.1s}.cf-rain-cloud-2{animation-delay:2.2s}
+.cf-rain-drop{animation:cf-rain-fall 1.4s cubic-bezier(.4,0,.6,1) infinite}
+.cf-rain-marker .cf-rain-cloud-outline{stroke:currentColor;stroke-width:.4;vector-effect:non-scaling-stroke}
+@keyframes cf-lightning-reveal{0%,8%{opacity:0;clip-path:inset(0 0 100% 0)}18%,30%{opacity:1;clip-path:inset(0 0 0 0)}35%,100%{opacity:0;clip-path:inset(0 0 0 0)}}
+@keyframes cf-rain-pose{0%,32%{opacity:1;transform:rotate(-2deg) scaleX(.98)}32.001%,33%{opacity:0;transform:rotate(-2deg) scaleX(.98)}33.001%,65%{opacity:1;transform:rotate(2deg) scaleY(.97)}65.001%,66%{opacity:0;transform:rotate(2deg) scaleY(.97)}66.001%,98%{opacity:1;transform:rotate(0)}98.001%,100%{opacity:0;transform:rotate(0)}}
+@keyframes cf-rain-fall{0%,12%{transform:translateY(-1.8px);opacity:.3}42%{opacity:1}100%{transform:translateY(5px);opacity:0}}
+@media(prefers-reduced-motion:reduce){.cf-lightning-marker .cf-lightning-silhouette,.cf-rain-marker .cf-rain-cloud,.cf-rain-marker .cf-rain-drop{animation:none!important;clip-path:none!important;transform:none!important}.cf-rain-marker .cf-rain-cloud{opacity:1}.cf-rain-marker .cf-rain-cloud-1,.cf-rain-marker .cf-rain-cloud-2{display:none}}
 
 .cf-width-control{grid-column:1/-1}.cf-width-control input[type="range"]{width:100%;accent-color:#194d3f;min-height:24px}.cf-width-control output{font-size:11px;color:#49645b}
 

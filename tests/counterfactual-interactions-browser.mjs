@@ -25,6 +25,10 @@ try{
  await page.mouse.move(760,610);await page.mouse.down();for(const p of [[820,611],[880,609],[940,612],[1000,609],[1060,611],[1120,610]])await page.mouse.move(...p,{steps:8});await page.mouse.up();
  await page.getByRole('button',{name:'Confirm',exact:true}).click();
  await page.locator('#cf-radiusKm').evaluate(el=>{el.value=200;el.dispatchEvent(new Event('input'));});
+ const zoomDensity=await page.evaluate(()=>{const view=[0,0,1440,960],f=FireDrawing.windField([[40,760],[350,650],[580,260],[810,150]],350,undefined,58,view,{},8);return{count:f.length,average:f.reduce((n,a)=>n+a.glyphLength,0)/f.length,lanes:new Set(f.map(a=>a.lane)).size};});
+ assert.ok(zoomDensity.count>0&&zoomDensity.average<58&&zoomDensity.lanes>12,'same viewport zoom produces shorter, denser glyphs: '+JSON.stringify(zoomDensity));
+ const turn=await page.evaluate(()=>{const guide=FireDrawing.sample([[100,760],[520,650],[760,260],[980,150]],96),f=FireDrawing.windField(guide,300,undefined,45,[0,0,1440,960],{},7);return f.filter(a=>a.lane===0).sort((a,b)=>a.station-b.station).map(a=>Math.round(Math.atan2(a.to[1]-a.from[1],a.to[0]-a.from[0])*180/Math.PI));});
+ assert.ok(turn.length>8&&new Set(turn).size>=6,'SW-W-NW field has intermediate headings: '+turn.join(','));
  const straight=await page.evaluate(()=>{const project=p=>fireEyePreview.map.project(p),arrows=fireEyeCounterfactual.visuals.windVectors.map(v=>v.points.map(project));return {width:fireEyeCounterfactual.event.radiusKm*2,span:Math.max(...arrows.map(a=>a[0].y))-Math.min(...arrows.map(a=>a[0].y)),aligned:arrows.every(a=>a.at(-1).x>a[0].x&&a.every(p=>Math.abs(p.y-a[0].y)<.1))};});
  assert.equal(straight.width,200);assert.ok(straight.span>72,'wide corridor retains outer lanes');assert.ok(straight.aligned,'wide outer arrows follow the drawn heading');
  await page.screenshot({path:directory+'/wind-straight-wide.png'});
