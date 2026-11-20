@@ -69,45 +69,67 @@
   if(!viewport)return[0,1];let lo=0,hi=1;const dx=b[0]-a[0],dy=b[1]-a[1];
   for(const [p,q] of [[-dx,a[0]-viewport[0]+pad],[dx,viewport[2]+pad-a[0]],[-dy,a[1]-viewport[1]+pad],[dy,viewport[3]+pad-a[1]]]){if(!p){if(q<0)return null;continue;}const t=q/p;if(p<0)lo=Math.max(lo,t);else hi=Math.min(hi,t);if(lo>hi)return null;}return[lo,hi];
  }
+ function windFrame(time,phase=0){
+  const cycle=(((time/2400-phase)%1)+1)%1,head=clamp(cycle/.15,0,1),tail=clamp((cycle-.55)/.15,0,1),end=cycle>=.70?0:head,start=cycle>=.70?0:tail;
+  return {visible:end>start,start,end,head,cycle,sweep:.25,hold:cycle>=.55&&cycle<.70&&end>0};
+ }
+ function windVisibility(field,time){
+  const visible=[];
+  for(const arrow of field){
+   const frame=windFrame(time,arrow.stagger);
+   if(frame.end-frame.start>=.35)visible.push({arrow,frame});
+  }
+  return visible;
+ }
  function windField(points,width=100,spacing=undefined,speed=27,viewport,options={},mapZoom){
   if(!Number.isFinite(width)||width<=0||(spacing!=null&&!(Number.isFinite(spacing)&&spacing>0))||!Number.isFinite(speed)||speed<0)throw Error('Wind dimensions and speed must be finite and positive.');
   const line=windCenterline(points);if(!speed||!line)return[];
   const zoomScale=Number.isFinite(mapZoom)?clamp(1-(mapZoom-6)*.18,.65,1):null;
   const scale=zoomScale??(viewport?clamp(Math.max(viewport[2]-viewport[0],viewport[3]-viewport[1])/1000,.7,1):1),lateral=(spacing||24)*scale,laneCount=Math.min(24,Math.max(0,Math.floor(width/2/lateral+1e-9))),lanes=[];
   for(let i=0;i<=laneCount;i++)lanes.push(...(i?[-i]:[]),i);
-  const glyphLength=Math.max(4,speed*scale),pitch=glyphLength+WIND_GAP,lead=pitch/2,maxPerLane=Math.max(8,Math.ceil(WIND_LIMIT/2/lanes.length)),ranges=[];
+  const glyphLength=Math.max(4,speed*scale),period=glyphLength*1.28,maxPerLane=Math.max(8,Math.ceil(WIND_LIMIT/2/lanes.length)),ranges=[];
   for(let i=1;i<line.points.length;i++){const r=clipWindSegment(line.points[i-1],line.points[i],viewport,width/2+glyphLength*2+12);if(r){const start=line.cumulative[i-1],length=line.cumulative[i]-start,range=[start+r[0]*length,start+r[1]*length];if(ranges.length&&range[0]<=ranges.at(-1)[1]+1)ranges.at(-1)[1]=range[1];else ranges.push(range);}}
   const out=[],bins=new Map(),cellSize=64;let attempts=0;
   const cells=box=>{const keys=[];for(let y=Math.floor(box[1]/cellSize);y<=Math.floor(box[3]/cellSize);y++)for(let x=Math.floor(box[0]/cellSize);x<=Math.floor(box[2]/cellSize);x++){keys.push(x+','+y);if(keys.length>256)return keys;}return keys;};
   const curvatureAt=station=>line.at(station+glyphLength/2,24).turn;
+  const collides=candidate=>{
+   if(!candidate||!Number.isFinite(candidate.arcLength)||candidate.arcLength<2)return true;
+   const box=candidate.bounds,reach=WIND_BEND_CLEARANCE+WIND_HEAD_REACH,neighbors=new Set(cells([box[0]-reach,box[1]-reach,box[2]+reach,box[3]+reach]).flatMap(key=>bins.get(key)||[]));
+   for(const other of neighbors){if(!windBoundsMeet(box,other.bounds))continue;const threshold=Math.max(candidate.clearance,other.clearance);if(windJump(candidate,other,threshold)||distance(candidate.points[Math.floor(candidate.points.length/2)],other.points[Math.floor(other.points.length/2)])<WIND_GAP||windHeadNear(candidate,other,candidate.clearance)||windHeadNear(other,candidate,candidate.clearance))return true;}
+   return false;
+  };
+  const make=(lane,index,station,desired,offset,variation,physical,virtual=false,span)=>{
+   const side=clamp(offset/(width/2),-1,1),length=Math.min(desired,line.length-station,2*(period*.5-Math.abs(offset)*.00017));if(length<2)return null;
+   const curve=windPolyline({line,station,length,offset,variation:Math.min(variation,1-.10*Math.abs(side))},width,curvatureAt(station)),arc=polylineLength(curve),box=pointBounds(curve);span=span??length;
+   const clearance=Math.max(Math.abs(line.at(station,24).turn),Math.abs(line.at(station+span,24).turn),Math.abs(line.at(station+span/2,24).turn))>.08?WIND_BEND_CLEARANCE:WIND_CLEARANCE;
+   const from=curve[0],to=curve.at(-1),pathPhase=((index-lane)%4+4)%4,stagger=physical?((Math.floor(pathPhase)/4)%1+lane*.027+offset*.00017+1)%1:Math.floor(index/4)/4;
+   return {id:'w-'+lane+'-'+Math.round((index+.001)*1000),from,to,points:curve,vector:[to[0]-from[0],to[1]-from[1]],phase:stagger,stagger,period,pitch:.5,physical,virtual,index,contributors:1,lane:offset,pathLane:offset,laneOffset:offset,station,major:lane===0,arcLength:arc,glyphLength:arc,spanLength:span,visualLength:desired,speedFactor:arc/span,strength:arc/speed,pathLength:line.length,laneGap:WIND_GAP,direction:1,bounds:box,clearance};
+   };
+  const commit=arrow=>{out.push(arrow);const keys=cells(arrow.bounds);for(const key of keys){if(!bins.has(key))bins.set(key,[]);bins.get(key).push(arrow);}};
   for(const lane of lanes){let laneItems=0;const offset=lane*lateral,primary=lane===0;
-   for(const range of ranges){let station=lead+Math.max(0,Math.ceil((range[0]-lead)/pitch))*pitch;
-    for(;station<=Math.min(line.length,range[1]+glyphLength);station+=pitch){
+   for(const range of ranges){let station=period+Math.max(0,Math.ceil((range[0]-period)/period))*period;
+    for(let next=0;station<=Math.min(line.length,range[1]+glyphLength)&&next++<maxPerLane;station+=period){
      if(++attempts>maxPerLane*lanes.length*2||out.length>=WIND_LIMIT)return out;if(laneItems>=maxPerLane)break;
-     const index=Math.round((station-lead)/pitch),variation=lane===0?1:Math.min(1,(1-.12*Math.abs(offset)/(width/2))*(1+.08*Math.sin(index*.71+lane*1.31))),length=Math.min(line.length-station,glyphLength),curve=windPolyline({line,station,length,offset,variation},width,curvatureAt(station)),arc=polylineLength(curve);
+     const index=Math.round(station/period),variation=primary?1:Math.min(1,(1-.12*Math.abs(offset)/(width/2))*(1+.08*Math.sin(index*.71+lane*1.31))),curve=windPolyline({line,station,length:Math.min(line.length-station,period),offset,variation},width,curvatureAt(station)),arc=polylineLength(curve);
      if(!Number.isFinite(arc)||arc<2)continue;const box=pointBounds(curve);
      if(viewport&&(box[2]<viewport[0]-100||box[0]>viewport[2]+100||box[3]<viewport[1]-100||box[1]>viewport[3]+100))continue;
-     const clearance=Math.max(Math.abs(line.at(station,24).turn),Math.abs(line.at(station+length,24).turn),Math.abs(line.at(station+length/2,24).turn))>.08?WIND_BEND_CLEARANCE:WIND_CLEARANCE,keys=cells(box),reach=WIND_BEND_CLEARANCE+WIND_HEAD_REACH,neighbors=new Set(cells([box[0]-reach,box[1]-reach,box[2]+reach,box[3]+reach]).flatMap(key=>bins.get(key)||[])),current={points:curve};let collision=false;
-     for(const other of neighbors){if(!windBoundsMeet(box,other.bounds))continue;const threshold=Math.max(clearance,other.clearance);if(windJump(current,other,threshold)||distance(curve[Math.floor(curve.length/2)],other.points[Math.floor(other.points.length/2)])<WIND_GAP||windHeadNear(current,other,clearance)||windHeadNear(other,current,clearance)){collision=true;break;}}
-     if(collision)continue;
-     const from=curve[0],to=curve.at(-1),arrow={id:'w-'+lane+'-'+index,from,to,points:curve,vector:[to[0]-from[0],to[1]-from[1]],phase:((index*.5001+lane*.137)%1+1)%1,contributors:1,lane:offset,pathLane:offset,laneOffset:offset,station,major:primary,arcLength:arc,glyphLength:arc,speedFactor:arc/length,strength:arc/speed,pathLength:line.length,laneGap:WIND_GAP,direction:1,bounds:box,clearance};
-     out.push(arrow);laneItems++;for(const key of keys){if(!bins.has(key))bins.set(key,[]);bins.get(key).push(arrow);}
+     let arrow=make(lane,index,station,glyphLength,offset,variation,true,false,period);
+     if(collides(arrow))for(const [retry,lateralShift,lengthScale] of [[station,0,1],[station-.12,0,1],[station+.12,0,1],[station-glyphLength*.06,-2,1],[station+glyphLength*.06,2,1],[station,0,.82],[station-glyphLength*.08,-2,.82],[station+glyphLength*.08,2,.82]]){
+      const candidate=make(lane,index,retry,glyphLength*lengthScale,offset+lateralShift,variation,true,false,station+period-retry);if(!collides(candidate)){candidate.retry={station:retry-station,lateral:lateralShift,lengthScale};arrow=candidate;break;}
+     }
+     if(collides(arrow))continue;commit(arrow);laneItems++;
     }
    }
   }
   if(options.innerDensity)for(const lane of [-1,1]){let laneItems=0;const offset=lane*lateral;
-   for(const range of ranges){let station=lead+Math.max(0,Math.ceil((range[0]-lead)/pitch))*pitch;
-    for(;station<=Math.min(line.length,range[1]+glyphLength);station+=pitch){
-     if(laneItems>=maxPerLane||out.length>=WIND_LIMIT)break;const index=Math.round((station-lead)/pitch),length=Math.min(line.length-station,glyphLength),curve=windPolyline({line,station,length,offset,variation:1},width,curvatureAt(station)),arc=polylineLength(curve);if(!Number.isFinite(arc)||arc<2)continue;const box=pointBounds(curve),clearance=Math.max(Math.abs(line.at(station,24).turn),Math.abs(line.at(station+length,24).turn),Math.abs(line.at(station+length/2,24).turn))>.08?WIND_BEND_CLEARANCE:WIND_CLEARANCE,keys=cells(box),reach=WIND_BEND_CLEARANCE+WIND_HEAD_REACH,neighbors=new Set(cells([box[0]-reach,box[1]-reach,box[2]+reach,box[3]+reach]).flatMap(key=>bins.get(key)||[])),current={points:curve};let blocked=false;
+   for(const range of ranges){let station=period+Math.max(0,Math.ceil((range[0]-period)/period))*period;
+    for(let next=0;station<=Math.min(line.length,range[1]+glyphLength)&&next++<maxPerLane*2;station+=period){
+     if(laneItems>=maxPerLane||out.length>=WIND_LIMIT)break;const index=Math.round(station/period),length=Math.min(line.length-station,glyphLength),curve=windPolyline({line,station,length,offset,variation:1},width,curvatureAt(station)),arc=polylineLength(curve);if(!Number.isFinite(arc)||arc<2)continue;const box=pointBounds(curve),clearance=Math.max(Math.abs(line.at(station,24).turn),Math.abs(line.at(station+length,24).turn),Math.abs(line.at(station+length/2,24).turn))>.08?WIND_BEND_CLEARANCE:WIND_CLEARANCE,keys=cells(box),reach=WIND_BEND_CLEARANCE+WIND_HEAD_REACH,neighbors=new Set(cells([box[0]-reach,box[1]-reach,box[2]+reach,box[3]+reach]).flatMap(key=>bins.get(key)||[])),current={points:curve};let blocked=false;
       for(const other of neighbors){if(!windBoundsMeet(box,other.bounds))continue;const threshold=Math.max(clearance,other.clearance);if(windJump(current,other,threshold)||distance(curve[Math.floor(curve.length/2)],other.points[Math.floor(other.points.length/2)])<WIND_GAP||windHeadNear(current,other,clearance)||windHeadNear(other,current,clearance)){blocked=true;break;}}
-      if(blocked)continue;const from=curve[0],to=curve.at(-1),arrow={id:'w-'+lane+'-'+index,from,to,points:curve,vector:[to[0]-from[0],to[1]-from[1]],phase:((index*.5001+lane*.137)%1+1)%1,contributors:1,lane:offset,pathLane:offset,laneOffset:offset,station,major:false,arcLength:arc,glyphLength:arc,speedFactor:arc/length,strength:arc/speed,pathLength:line.length,laneGap:WIND_GAP,direction:1,bounds:box,clearance};out.push(arrow);laneItems++;for(const key of keys){if(!bins.has(key))bins.set(key,[]);bins.get(key).push(arrow);}
+      if(blocked)continue;commit(make(lane,index,station,length,offset,1,false));laneItems++;
     }
    }
   }return out;
- }
- function windFrame(time,phase=0){
-  const cycle=(((time/2400-phase)%1)+1)%1,head=cycle*4,tail=head-1,start=Math.max(0,tail),end=Math.min(1,head);
-  return {visible:end>start,start,end,head:head>0&&head<=1,cycle};
  }
  function shadeIntensity(e){
   let amount=e.type==='heavy_rain'?Math.max(0,e.rainIn):e.type==='thunderstorm'?Math.max(0,e.coverage):Math.max(0,e.treatedFraction)*Math.pow(.5,Math.max(0,e.ageYears)/8);
@@ -138,6 +160,6 @@
   const at=target=>{target=Math.max(0,Math.min(arcs.at(-1),target));let i=1;while(i<arcs.length-1&&arcs[i]<target)i++;const a=offshore[i-1],b=offshore[i],t=(target-arcs[i-1])/(arcs[i]-arcs[i-1]);return[a[0]+(b[0]-a[0])*t,a[1]+(b[1]-a[1])*t];};
   return Array.from({length:6},(_,i)=>[...at(start+direction*step*i),80-i*3]);
  }
- const api={smooth,sample,windField,windFrame,traceWindCenterline:windCenterline,traceWindPolyline:windPolyline,shadeIntensity,stormGrid,distanceField,expandMask,coastalTrack,defaultTrack:map=>{const c=map.getCenter();return coastalTrack([c.lng,c.lat],map.getZoom());}};
+ const api={smooth,sample,windField,windFrame,windVisibility,traceWindCenterline:windCenterline,traceWindPolyline:windPolyline,shadeIntensity,stormGrid,distanceField,expandMask,coastalTrack,defaultTrack:map=>{const c=map.getCenter();return coastalTrack([c.lng,c.lat],map.getZoom());}};
  if(typeof module==='object'&&module.exports)module.exports=api;else root.FireDrawing=api;
 })(typeof window==='undefined'?globalThis:window);

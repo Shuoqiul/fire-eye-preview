@@ -129,9 +129,45 @@ test('strong maximum-width wind fields keep distinct flowing glyph clearance wit
   assert.ok(elapsed<1500,'maximum-width acute field stays interactive: '+elapsed.toFixed(1)+'ms');
  }
 });
-test('wind frames retain eased growth, blank phases and staggered phases',()=>{
- assert.ok(g.windFrame(240,0).head);assert.ok(!g.windFrame(900,0).head);assert.ok(g.windFrame(900,0).start>0);assert.equal(g.windFrame(1500,0).visible,false);
+test('wind frames grow, hold, shrink and gap monotonically with staggered phases',()=>{
+ let last={start:0,end:0};for(let time=0;time<1680;time++){const frame=g.windFrame(time,0);assert.ok(frame.start>=last.start&&frame.end>=last.end,'head and tail move monotonically');last=frame;}
+ const growth=g.windFrame(240,0),hold=g.windFrame(1480,0),shrink=g.windFrame(1640,0);assert.ok(growth.head>=.6&&growth.start===0);assert.ok(hold.start>0&&hold.start<1&&hold.end===1);assert.ok(shrink.start>hold.start&&shrink.end===1,'held glyph loses its tail before disappearing');
  const field=g.windField([[0,100],[300,0]],120,undefined,45);assert.ok(new Set(field.map(v=>v.phase)).size>field.length/2);for(let t=2400;t<4800;t+=50)assert.ok(field.some(a=>g.windFrame(t,a.phase).visible));
+});
+test('four mathematically staggered stations keep complete glyphs visible along a straight guide',()=>{
+ const guide=[[0,0],[1800,0]];
+  for(const speed of [12,27,58]){
+  const field=g.windField(guide,240,undefined,speed),lanes=[...new Set(field.map(arrow=>arrow.lane))];
+  const anchor=field.filter(arrow=>arrow.lane===24&&arrow.station>0).sort((a,b)=>a.station-b.station);
+  assert.ok(anchor.length>=18,'four station phases remain populated across the lane');
+  const phases=anchor.map(arrow=>Math.round(((arrow.stagger-.00017*24)%1+1)*4)/4).sort((a,b)=>a-b);
+  let maximum=0;for(let i=1;i<phases.length;i++)maximum=Math.max(maximum,Math.round((phases[i]-phases[i-1])*1000)/1000);assert.ok(maximum<=.25,'four phase slots retain bounded local gaps');
+  for(let time=0;time<4800;time+=4){
+   const visible=g.windVisibility(field,time),byLane=new Map();
+   for(const {arrow} of visible)byLane.set(arrow.lane,(byLane.get(arrow.lane)||0)+1);
+   for(const lane of lanes)assert.ok((byLane.get(lane)||0)>0,`speed ${speed}, t=${time}, lane ${lane}: a complete shaft survives the renderer cutoff`);
+  }
+ }
+});
+test('dense sharp turns keep complete moving glyphs and move rejected glyphs with bend speed ordering',()=>{
+ for(const path of [[[0,0],[240,-180],[480,0]],[[0,0],[-240,-180],[-480,0]],[[100,600],[220,330],[420,300]]]){
+  for(const [speed,width] of [[27,160],[58,240]]){
+   const field=g.windField(path,width,undefined,speed);
+   for(let time=1200;time<2400;time+=16)assert.ok(g.windVisibility(field,time).filter(item=>item.frame.end-item.frame.start>=.6).length>0,'curved chain retains displayed glyphs');
+   assert.ok(field.length>0&&field.length<=1200);assert.ok(field.filter(arrow=>arrow.retry).length>0,'dense turns retain retried glyphs');
+   assert.ok(g.windVisibility(field,1800).length>0);
+   assert.ok(fieldClearance(field)>=4.5,'resolved turn glyphs retain shaft clearance');
+  }
+ }
+});
+test('tight bend retries retain local stations and speed ordering',()=>{
+ for(const turn of [-1,1]){
+  const path=[[0,300],[300+turn*30,0],[600,300]],field=g.windField(path,160,undefined,27),lane=field.filter(arrow=>arrow.lane===24).sort((a,b)=>a.station-b.station);
+  assert.ok(lane.length>=12);assert.ok(field.some(arrow=>arrow.retry),'crowded bend resolves by shifted retry geometry');
+  const firstGap=Math.max(...lane.slice(1).map((arrow,i)=>arrow.station-lane[i].station));assert.ok(firstGap<=130,'crowded bend retains local coverage');
+  const inner=field.filter(arrow=>arrow.lane===24&&arrow.station>135&&arrow.station<225),outer=field.filter(arrow=>arrow.lane===-24&&arrow.station>135&&arrow.station<225);
+  assert.ok(average(inner.map(arrow=>arrow.speedFactor))<average(outer.map(arrow=>arrow.speedFactor)),'both handed bends keep the inner side slower');
+ }
 });
 test('public rain, coverage and treatment magnitudes darken their area fields',()=>{
  for(const [type,key,values] of [['heavy_rain','rainIn',[0,.1,.3,.6,1]],['thunderstorm','coverage',[0,.2,.4,.8]],['prescribed_burn','treatedFraction',[0,.2,.6,1]]]){

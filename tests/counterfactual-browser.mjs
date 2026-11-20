@@ -20,11 +20,11 @@ for(const type of ['high_wind','heavy_rain','thunderstorm','prescribed_burn','hu
   if(type==='thunderstorm')e.rainIn=0;
   if(type==='hurricane')e.track=Array.from({length:6},()=>[-120,38,100]);
   api.setEvent(e);const r=await api.run();
-  return {type,status:api.state.status,available:r?.available,span:r?.span,unit:r?.unit,forcing:r?.forcing,
+  return {type,status:api.state.status,available:r?.available,span:r?.scoreSpan,nativeUnit:r?.nativeUnit,unit:r?.unit,forcing:r?.forcing,
    discovery:!!r?.discovery,windows:r?.windows.map(w=>({lead:w.leadHours,time:w.targetTime,cells:w.summary.cells,baseline:w.summary.baseline,scenario:w.summary.scenario})),
    retained:!!r?.windows.every(w=>w.publishedBaseline.every((v,i)=>{const b=api.researchContext?.windows[0].values[i];return !api.researchContext||(Number.isNaN(v)&&Number.isNaN(b))||v===b;}))};
  },type);
- assert.ok(result.windows?.length,type+': '+result.status);assert.equal(result.retained,true);assert.equal(result.unit,'ISI');
+ assert.ok(result.windows?.length,type+': '+result.status);assert.equal(result.retained,true);assert.equal(result.unit,'score');assert.equal(result.nativeUnit,'ISI');
  if(type==='prescribed_burn')assert.equal(result.available,false);
  else if(type==='thunderstorm'){assert.equal(result.span,0);assert.equal(result.discovery,true);}
  else {assert.equal(result.available,true);assert.ok(result.span>0,type+' has a native mechanism response');}

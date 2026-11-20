@@ -31,6 +31,8 @@
 function weakenTrack(track,vmax,classify=()=>({land:false,distanceKm:Infinity}),{manual=false}={}){
  const environment=p=>classify(p.slice(0,2));
   const dissipate=wind=>wind<5?0:wind;
+  // One continuous coastal taper over 115 km; the same dimensionless radius
+  // remains monotone for weak and strong storm sections.
   const landAttenuation=(site,hours)=>Math.exp(-.19*hours-Math.max(0,site.distanceKm||0)/115);
   let wind=vmax,overLand=false;return track.map((point,i)=>{
    const site=environment(point);

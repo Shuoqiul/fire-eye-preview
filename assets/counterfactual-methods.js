@@ -233,6 +233,13 @@
     domain('area fraction',fraction,0,1);
     return (1-fraction)*base+fraction*treated;
   }
+  function odsShift(score,shift){
+    domain('score',score,0,1);
+    finite('odds shift',shift);
+    if(shift===0)return score;
+    const ratio=Math.exp(shift);
+    return score*ratio/(1-score+score*ratio);
+  }
 
   const defaults=Object.freeze({
     initialFFMC:FFMC_INITIAL,
@@ -245,7 +252,11 @@
     moistureFromFFMC,ffmcFromMoisture,hourlyRainMoisture,hourlyFFMC,
     fineFuelFactor,initialSpreadIndex,windLogRatio,blendWindVectors,rcliperParameters,rcliperRainRate,
     atlanticStormParameters,cycloneWind,cycloneRadius,
-    dailyDiscoveryKernel,halfDayDiscoveryKernel,holdoverProbability,areaMixture
+    dailyDiscoveryKernel,halfDayDiscoveryKernel,holdoverProbability,areaMixture,
+    oddsShift:function(score,shift){
+      if(shift>1||shift<-1)throw new RangeError('odds shift lies outside [-1, 1]');
+      return odsShift(score,shift);
+    }
   };
   if(typeof module==='object'&&module.exports)module.exports=api;else root.FireMethods=api;
 })(typeof window==='undefined'?globalThis:window);
