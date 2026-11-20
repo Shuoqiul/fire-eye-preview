@@ -94,8 +94,33 @@
   const line=windCenterline(points);if(!speed||!line)return[];
   const visibleLine=line;
   const zoomScale=Number.isFinite(mapZoom)?clamp(1-(mapZoom-6)*.025,.96,1):null;
-  const scale=zoomScale??(viewport?clamp(Math.max(viewport[2]-viewport[0],viewport[3]-viewport[1])/1000,.7,1):1),lateral=(spacing||24)*scale,laneCount=Math.min(24,Math.max(0,Math.floor(width/2/lateral+1e-9))),lanes=[];
-  for(let i=0;i<=laneCount;i++)lanes.push(...(i?[-i]:[]),i);
+  const scale=zoomScale??(viewport?clamp(Math.max(viewport[2]-viewport[0],viewport[3]-viewport[1])/1000,.7,1):1),lateral=(spacing||24)*scale,fullMax=Math.max(0,Math.floor(width/(2*lateral)+1e-9)),maxLane=Math.min(24,fullMax);
+  // Window a wide projected corridor around the visible centreline. The lane
+  // quotient remains within the true half-width; only the finite selection
+  // moves, so no arrow is padded outside the user's guide or corridor.
+  let laneStart=0;
+  if(viewport&&maxLane===24){
+   const vc=[(viewport[0]+viewport[2])/2,(viewport[1]+viewport[3])/2],samples=[];
+   for(let i=1;i<visibleLine.points.length;i++){
+    const a=visibleLine.points[i-1],b=visibleLine.points[i],dx=b[0]-a[0],dy=b[1]-a[1],len=dx*dx+dy*dy;
+    const t=len?clamp(((vc[0]-a[0])*dx+(vc[1]-a[1])*dy)/len,0,1):0,length=Math.sqrt(len),normal=length?[-dy/length,dx/length]:[0,0],point=[a[0]+dx*t,a[1]+dy*t];
+    samples.push({d:Math.hypot(vc[0]-point[0],vc[1]-point[1]),point:visibleLine.at(visibleLine.cumulative[i-1]+length*t,24)});
+   }
+   if(samples.length){const nearest=samples.reduce((a,b)=>a.d<b.d?a:b),sample=nearest.point,normal=sample.normal,center=24;
+    const raw=(vc[0]-sample.point[0])*normal[0]+(vc[1]-sample.point[1])*normal[1];
+    const target=clamp(Math.round(raw/lateral),-(fullMax-center),fullMax-center);
+    laneStart=target-center;
+   }
+  }
+  if(laneStart===0&&viewport&&maxLane===24){const vc=[(viewport[0]+viewport[2])/2,(viewport[1]+viewport[3])/2];
+   let nearest=Infinity,station=0;
+   for(let i=1;i<visibleLine.points.length;i++){const a=visibleLine.points[i-1],b=visibleLine.points[i],dx=b[0]-a[0],dy=b[1]-a[1],len=dx*dx+dy*dy,t=len?clamp(((vc[0]-a[0])*dx+(vc[1]-a[1])*dy)/len,0,1):0,d=Math.hypot(vc[0]-a[0]-dx*t,vc[1]-a[1]-dy*t);if(d<nearest){nearest=d;station=visibleLine.cumulative[i-1]+Math.sqrt(len)*t;}}
+   const sample=visibleLine.at(station,24),target=clamp(Math.round(((vc[0]-sample.point[0])*sample.normal[0]+(vc[1]-sample.point[1])*sample.normal[1])/lateral),-(fullMax-24),fullMax-24);laneStart=clamp(target-24,-(fullMax-24),fullMax-24);
+  }
+  const center=laneStart+24;
+  // Large corridors can lose a centre ray to local clearance tests. The
+  // nearest visible ray becomes the primary visual streamline.
+  const lanes=laneStart===0?Array.from({length:2*maxLane+1},(_,i)=>i===0?0:(i%2?Math.ceil(i/2):-Math.ceil(i/2))):[center,...Array.from({length:2*maxLane},(_,i)=>center+(i%2===0?i/2+1:-(i/2+1)))];
   const glyphLength=Math.max(4,speed*scale),period=glyphLength*1.38,maxPerLane=Math.max(8,Math.ceil(WIND_LIMIT/2/lanes.length)),ranges=[];
   // Sample only the guide's real extent. At a high zoom, a clipped centre
   // segment retains lateral offsets inside the viewport.
@@ -125,7 +150,8 @@
      if(!Number.isFinite(arc)||arc<2)continue;const box=pointBounds(curve);
      if(viewport&&(box[2]<viewport[0]-100||box[0]>viewport[2]+100||box[3]<viewport[1]-100||box[1]>viewport[3]+100))continue;
      let arrow=make(lane,index,station,glyphLength,offset,variation,true,false,period);
-     if(collides(arrow))for(const [lateralShift,lengthScale] of [[0,1],[-2,1],[2,1],[0,.82],[0,.82],[-2,.82],[2,.82]]){
+   if(collides(arrow))for(const [rawShift,lengthScale] of [[0,1],[-2,1],[2,1],[0,.82],[0,.82],[-2,.82],[2,.82]]){
+      const lateralShift=clamp(offset+rawShift,-width/2,width/2)-offset;
       const candidate=make(lane,index,station,glyphLength*lengthScale,offset+lateralShift,variation,true,false,period);if(!collides(candidate)){candidate.retry={lateral:lateralShift,lengthScale};arrow=candidate;break;}
      }
      if(collides(arrow))continue;commit(arrow);laneItems++;

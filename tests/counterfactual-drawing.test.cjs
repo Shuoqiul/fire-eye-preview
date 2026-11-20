@@ -208,3 +208,11 @@ test('zoom winding guides keep local arrow spacing and propagate turns across cl
  assert.ok(continuous,'neighbouring shafts follow the same local direction');
  assert.ok(fieldClearance(field)>=4.5);
 });
+test('wide off-screen centreline selects bounded signed lanes that reach the viewport',()=>{
+ const view=[0,0,900,600],guide=[[60,-800],[960,-800]],field=g.windField(guide,2500,undefined,58,view,{},5),points=field.flatMap(a=>a.points);
+ assert.ok(field.length>0&&field.length<=1200);
+ assert.ok(new Set(field.map(a=>a.lane)).size>=8);
+ assert.ok(points.some(([x,y])=>x>=view[0]&&x<=view[2]&&y>=view[1]&&y<=view[3]));
+ assert.ok(field.every(a=>a.lane>=-1250&&a.lane<=1250),'signed lanes remain inside the real projected half-width');
+ const centered=g.windField([[60,300],[960,300]],2500,undefined,58,view,{},5);assert.deepEqual([...new Set(centered.map(a=>a.lane))].slice(0,2),[0,24],'centered wide corridors retain the original centre-first placement');
+});

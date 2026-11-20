@@ -7,7 +7,7 @@ try{
  await page.route('**/*',r=>new URL(r.request().url()).origin===new URL(base).origin?r.continue():r.abort());
  await page.goto(base);await page.waitForFunction(()=>window.fireEyePreview?.ready&&window.fireEyeCounterfactual,null,{timeout:60000});await page.evaluate(()=>fireEyeCounterfactual.open());
  for(const type of ['hurricane','high_wind','heavy_rain','thunderstorm','prescribed_burn']){
-  await page.locator(`[data-event="${type}"]`).click();assert.equal(await page.locator('.cf-brush-canvas').count(),1);assert.equal(await page.locator('.cf-brush-tools').count(),1);
+  await page.locator(`[data-event="${type}"]`).click();assert.equal(await page.locator('.cf-brush-canvas').count(),1);assert.equal(await page.locator('.cf-brush-tools').count(),1);assert.equal(await page.locator('#cf-run').isVisible(),true);
   assert.equal(await page.evaluate(()=>fireEyeCounterfactual.visuals.brushActive),true);
   assert.match(await page.locator('.cf-brush-canvas').getAttribute('aria-label'),['hurricane','high_wind'].includes(type)?/path/:/area/);
  }
@@ -26,10 +26,10 @@ try{
  await page.getByRole('button',{name:'Confirm',exact:true}).click();
  await page.locator('#cf-radiusKm').evaluate(el=>{el.value=200;el.dispatchEvent(new Event('input'));});
  const zoomDensity=await page.evaluate(()=>{const view=[0,0,1440,960],f=FireDrawing.windField([[40,760],[350,650],[580,260],[810,150]],350,undefined,58,view,{},8);return{count:f.length,average:f.reduce((n,a)=>n+a.glyphLength,0)/f.length,lanes:new Set(f.map(a=>a.lane)).size};});
- assert.ok(zoomDensity.count>0&&zoomDensity.average<58&&zoomDensity.lanes>12,'same viewport zoom produces shorter, denser glyphs: '+JSON.stringify(zoomDensity));
+ assert.ok(zoomDensity.count>=100&&zoomDensity.average>=35&&zoomDensity.average<58&&zoomDensity.lanes>12,'same viewport zoom keeps legible glyphs and lateral coverage: '+JSON.stringify(zoomDensity));
  const turn=await page.evaluate(()=>{const guide=FireDrawing.sample([[100,760],[520,650],[760,260],[980,150]],96),f=FireDrawing.windField(guide,300,undefined,45,[0,0,1440,960],{},7);return f.filter(a=>a.lane===0).sort((a,b)=>a.station-b.station).map(a=>Math.round(Math.atan2(a.to[1]-a.from[1],a.to[0]-a.from[0])*180/Math.PI));});
  assert.ok(turn.length>8&&new Set(turn).size>=6,'SW-W-NW field has intermediate headings: '+turn.join(','));
- const straight=await page.evaluate(()=>{const project=p=>fireEyePreview.map.project(p),arrows=fireEyeCounterfactual.visuals.windVectors.map(v=>v.points.map(project));return {width:fireEyeCounterfactual.event.radiusKm*2,span:Math.max(...arrows.map(a=>a[0].y))-Math.min(...arrows.map(a=>a[0].y)),aligned:arrows.every(a=>a.at(-1).x>a[0].x&&a.every(p=>Math.abs(p.y-a[0].y)<.1))};});
+ const straight=await page.evaluate(()=>{const project=p=>fireEyePreview.map.project(p),arrows=fireEyeCounterfactual.visuals.windVectors.map(v=>v.points.map(project)),heading=a=>Math.atan2(a.at(-1).y-a[0].y,a.at(-1).x-a[0].x),guide=heading(fireEyeCounterfactual.event.windPath.map(project));return {width:fireEyeCounterfactual.event.radiusKm*2,span:Math.max(...arrows.map(a=>a[0].y))-Math.min(...arrows.map(a=>a[0].y)),aligned:arrows.every(a=>a.at(-1).x>a[0].x&&Math.abs(heading(a)-guide)<.035)};});
  assert.equal(straight.width,200);assert.ok(straight.span>72,'wide corridor retains outer lanes');assert.ok(straight.aligned,'wide outer arrows follow the drawn heading');
  await page.screenshot({path:directory+'/wind-straight-wide.png'});
  await draw.click();
@@ -56,9 +56,9 @@ try{
   finally{ctx.beginPath=begin;ctx.moveTo=move;ctx.stroke=stroke;}
   return {styles:[...styles],counts:[...counts],arrows,headless};
  });
- assert.ok(visible.arrows>45&&visible.counts.length>1,'staggered wind glyphs cycle on a wide bend');
+ assert.ok(visible.arrows>45&&visible.counts.length>1,'staggered wind glyphs keep moving on a wide bend');
  assert.equal(visible.headless,0,'each drawn shaft carries its arrowhead');
- assert.equal(visible.styles.length,1,'all animated lanes use the same color, opacity and stroke');
+ assert.equal(visible.styles.length,1,'all animated lanes use the same color, opacity and stroke');assert.ok(Number(visible.styles[0].split('|')[2])<1.5,'natural fine streamlets use a restrained stroke');
  await page.screenshot({path:directory+'/wind-acute-bend.png'});
  await page.evaluate(()=>fireEyePreview.map.jumpTo({center:[-83.6,32.5],zoom:7}));
  await page.locator('[data-preset="Damaging"]').click();await draw.click();
@@ -87,8 +87,7 @@ try{
   }));
   return {min,count:arrows.length};
  });
- assert.ok(clearance.count>20&&clearance.min>1.7,`full arrowheads and shafts have room at the crowded bend: ${JSON.stringify(clearance)}`);
- console.log(`Tight bend: ${clearance.count} complete arrows, closest strokes ${clearance.min.toFixed(2)} CSS px apart`);
+ assert.ok(clearance.count>20&&clearance.min>1.7,`full arrowheads and shafts have room at the crowded bend: ${JSON.stringify(clearance)}`); console.log(`Tight bend: ${clearance.count} complete arrows, closest strokes ${clearance.min.toFixed(2)} CSS px apart`);
  await page.screenshot({path:directory+'/wind-bend-clearance.png'});
  await page.emulateMedia({reducedMotion:'no-preference'});
  await page.locator('[data-event="heavy_rain"]').click();await page.mouse.move(820,600);await page.mouse.down();await page.mouse.move(1050,660,{steps:15});await page.mouse.move(1010,760,{steps:10});await page.mouse.up();await page.getByRole('button',{name:'Confirm',exact:true}).click();
