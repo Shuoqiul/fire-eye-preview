@@ -19,6 +19,22 @@ try{
  await page.locator('[data-event="high_wind"]').click();await page.mouse.move(760,640);await page.mouse.down();for(const p of [[840,600],[930,440],[1050,460],[950,570],[1100,610]])await page.mouse.move(...p,{steps:10});await page.mouse.up();
  await page.getByRole('button',{name:'Confirm',exact:true}).click();assert.equal(await page.locator('.cf-brush-canvas').count(),0);
  assert.ok(await page.evaluate(()=>fireEyeCounterfactual.event.windPath.length>=6));await page.waitForTimeout(300);
+ await page.screenshot({path:(process.env.CF_SCREENSHOT_DIR||'/tmp/cf-radar-acceptance')+'/wind-source-path.png'});
+ const firstCameraKey=await page.evaluate(()=>{const e=fireEyeCounterfactual.event;return JSON.stringify([e.windPath,e.windFromDeg,e.radiusKm,e.windMph])});
+ const cameraDensity=[];
+ for(const ratio of [1,1.25,1.5,2]){
+  await page.evaluate(ratio=>{const map=fireEyePreview.map,c=[-98,38],anchor=map.project(c),b=map.getBounds(),q=map.project([b.getWest()+(b.getEast()-b.getWest())*.15*ratio,38]);map.jumpTo({center:map.unproject([anchor.x*ratio-(ratio-1)*q.x,anchor.y*ratio-(ratio-1)*q.y]),zoom:map.getZoom()+Math.log2(ratio)});},ratio);
+  await page.waitForTimeout(180);
+  cameraDensity.push(await page.evaluate(()=>{
+   const e=fireEyeCounterfactual.event,vectors=fireEyeCounterfactual.visuals.windVectors,map=fireEyePreview.map,container=map.getContainer(),width=container.clientWidth,height=container.clientHeight,project=p=>map.project(p),inside=vectors.map(v=>v.points.map(project).filter(p=>p.x>=0&&p.x<=width&&p.y>=0&&p.y<=height)).flat();
+   const projects=vectors.map(v=>v.points.map(project).filter(p=>p.x>=0&&p.x<=width&&p.y>=0&&p.y<=height)).filter(p=>p.length>=2),top=Math.min(...projects.flat().map(p=>p.y)),bottom=Math.max(...projects.flat().map(p=>p.y)),left=Math.min(...projects.flat().map(p=>p.x)),right=Math.max(...projects.flat().map(p=>p.x));
+   return{zoom:map.getZoom(),count:vectors.length,inside:inside.length,density:projects.length/Math.max(1,(right-left+1)*(bottom-top+1))*1000,key:JSON.stringify([e.windPath,e.windFromDeg,e.radiusKm,e.windMph])};
+  }));
+ }
+ assert.ok(cameraDensity.every(o=>o.count>0&&o.inside>0),'wind stays visible across a real zoom');
+ assert.ok(cameraDensity.every(o=>o.key===firstCameraKey),'real zoom does not create or discard geography');
+ assert.ok(new Set(cameraDensity.map(o=>Math.round(o.density))).size<=2,'wind density per visible corridor area stays comparable across zoom');
+ if(process.env.CF_WIND_DIAGNOSTICS)console.log('WIND_ZOOM_DENSITY',JSON.stringify(cameraDensity.map(o=>({zoom:o.zoom,count:o.count,density:o.density}))));
  const directory=process.env.CF_SCREENSHOT_DIR||'/tmp/cf-radar-acceptance';fs.mkdirSync(directory,{recursive:true});await page.screenshot({path:directory+'/wind-desktop.png'});
  await page.evaluate(()=>fireEyePreview.map.jumpTo({center:[-98,38],zoom:6}));
  await page.locator('[data-event="high_wind"]').click();

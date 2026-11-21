@@ -227,3 +227,86 @@ test('deep zoom clips each lateral lane before spending its arrow budget',()=>{
  assert.ok(new Set(inside.map(a=>a.lane)).size>15);
  assert.ok(inside.some(a=>a.from[0]<150)&&inside.some(a=>a.to[0]>950));
 });
+test('acute hairpin, rotation and mirror use one continuous short-arc heading field',()=>{
+ const guide=[[150,300],[730,340],[150,440]];
+ for(const angle of [10,15,19]){
+  const endpoint=[580-580*Math.cos(angle*Math.PI/180),580*Math.sin(angle*Math.PI/180)],line=[[0,0],[580,0],endpoint];
+  for(const rotation of [0,Math.PI/7,1.7])for(const mirror of [1,-1]){
+   const c=Math.cos(rotation),s=Math.sin(rotation),rotated=line.map(([x,y])=>[c*x-s*y*mirror,s*x+c*y*mirror]),field=g.createWorldWindField(rotated,200,27);
+   for(const step of [5,20]){
+    for(let y=-420;y<420;y+=step*2)for(let x=-420;x<1100;x+=step*2){
+     const a=field.sample(x,y);if(!a)continue;
+     for(const [dx,dy] of [[step,0],[0,step],[-step,0]]){
+      const b=field.sample(x+dx,y+dy);if(!b)continue;
+      const change=Math.abs(Math.atan2(Math.sin(Math.atan2(b.heading[1],b.heading[0])-Math.atan2(a.heading[1],a.heading[0])),Math.cos(Math.atan2(b.heading[1],b.heading[0])-Math.atan2(a.heading[1],a.heading[0]))));
+      assert.ok(change<Math.PI*.5,`${angle}-degree hairpin, rotation ${rotation.toFixed(2)}, mirror ${mirror}, ${step}px: ${(change*180/Math.PI).toFixed(1)}-degree local jump`);
+     }
+    }
+   }
+  }
+  const fold=[[0,0],[580,0],[580-580*Math.cos(angle*Math.PI/180),580*Math.sin(angle*Math.PI/180)]],foldField=g.createWorldWindField(fold,200,27);
+  assert.ok(foldField.maxTurn<Math.PI-angle*Math.PI/180+1e-8,'acute turn advances in the intended short direction');
+ }
+ const narrow=g.createWorldWindField(guide,120,45),wide=g.createWorldWindField(guide,200,45),inside=[[300,340],[420,350],[540,330],[690,395]];
+ for(const point of inside){
+  assert.ok(narrow.sample(...point)&&wide.sample(...point),'width increments expand symmetrically instead of changing the centreline');
+  const a=narrow.sample(...point),b=wide.sample(...point),angleA=Math.atan2(a.heading[1],a.heading[0]),angleB=Math.atan2(b.heading[1],b.heading[0]),turn=Math.abs(Math.atan2(Math.sin(angleB-angleA),Math.cos(angleB-angleA)));
+  assert.ok(turn<1e-10,'the same geography keeps an identical field direction as width grows');
+ }
+ const far=[[300,180],[450,190],[560,170],[700,520]],base=wide.sample(310,380).heading,scaled=g.createWorldWindField(guide.map(([x,y])=>[x*40,y*40]),8000,45),sample=scaled.sample(310*40,380*40);
+ assert.ok(Math.abs(sample.heading[0]-base[0])<1e-10&&Math.abs(sample.heading[1]-base[1])<1e-10,'a fourfold camera scale retains ground headings');
+ assert.ok(far.every(([x,y])=>!wide.hasPoint(x,y)),'wind absence remains outside the true-width geographic support');
+});
+test('near-collinear sampled brush reaches stable headings and keeps true support',()=>{
+ const guide=Array.from({length:48},(_,i)=>{const t=i/47;return[80+t*840,260+Math.sin(t*Math.PI*7)*3]});
+ const field=g.createWorldWindField(guide,240,45),start=guide[0],end=guide.at(-1),chord=Math.hypot(end[0]-start[0],end[1]-start[1]),ux=(end[0]-start[0])/chord,uy=(end[1]-start[1])/chord;
+ for(let x=150;x<850;x+=20)for(let y=300;y<430;y+=20){
+  const a=field.sample(x,y);if(!a)continue;
+  assert.ok(Math.abs(a.heading[0]-ux)<1e-10&&Math.abs(a.heading[1]-uy)<1e-10,'sample jitter does not tilt the drawn heading');
+ }
+ assert.equal(field.points.length,guide.length,'field retains all original brush coordinates');
+ assert.equal(field.sigma,g.createWorldWindField([start,end],240,45).sigma,'direction scale uses the canonical straight guide');
+ assert.ok(g.createWorldWindField([[0,0],[600,0]],40,45).sigma>0,'two-point path has a defined direction scale');
+ assert.ok(g.createWorldWindField([[0,0],[600,0]],40,45).sample(300,20));
+});
+test('48-point remeshing retains a genuine hairpin turn without sampling-scale dependence',()=>{
+ const guide=[[100,600],[500,600],[450,690]],remeshed=g.sample(guide,48),coarse=g.createWorldWindField(guide,160,27),dense=g.createWorldWindField(remeshed,160,27);
+ assert.ok(Math.abs(coarse.sigma-dense.sigma)<coarse.sigma*.03,`guide sigma: ${coarse.sigma}, remeshed: ${dense.sigma}`);
+ assert.ok(coarse.sigma>g.createWorldWindField([[100,600],[450,690]],160,27).sigma,'the shared arm length sustains the bend blend');
+ const steps=5,region=[];
+ for(let y=580;y<690;y+=steps)for(let x=150;x<505;x+=steps){
+  const a=coarse.sample(x,y),b=dense.sample(x,y);if(!a||!b)continue;
+  const change=Math.abs(Math.atan2(Math.sin(Math.atan2(b.heading[1],b.heading[0])-Math.atan2(a.heading[1],a.heading[0])),Math.cos(Math.atan2(b.heading[1],b.heading[0])-Math.atan2(a.heading[1],a.heading[0]))));
+  assert.ok(change<Math.PI*.36,`dense and coarse guide share the local blend: ${change}`);
+  if(Math.abs(Math.atan2(b.heading[1],b.heading[0]))>.15)region.push(b);
+ }
+ assert.ok(region.length>70,'the actual 48-point brush keeps a visible continuous turning region');
+ let changes=0;
+ for(let y=575;y<690;y+=steps)for(let x=400;x<510;x+=steps){
+  const u=dense.sample(x,y);if(!u)continue;for(const [dx,dy] of [[steps,0],[0,steps],[-steps,0]]){const v=dense.sample(x+dx,y+dy);if(!v)continue;
+  const change=Math.abs(Math.atan2(Math.sin(Math.atan2(v.heading[1],v.heading[0])-Math.atan2(u.heading[1],u.heading[0])),Math.cos(Math.atan2(v.heading[1],v.heading[0])-Math.atan2(u.heading[1],u.heading[0]))));
+  assert.ok(change<Math.PI*.40,'the remeshed hairpin has no local opposing jump');changes++;
+  }}
+ assert.ok(changes>10);
+});
+test('crossing sharp legs use one radius-independent heading and turn consistently with width',()=>{
+ const legs=[[[-120,90],[120,90],[0,-90]],[[0,90],[0,-90],[425,10]]];
+ for(const guide of legs){
+  for(const [widths,speed] of [[[40,120],20],[[120,240],58]]){
+   const fields=widths.map(width=>g.createWorldWindField(guide,width,speed)),narrow=fields[0],wide=fields[1];
+   for(let y=-80;y<81;y+=10)for(let x=-100;x<=100;x+=10){
+    const a=narrow.sample(x,y),b=wide.sample(x,y);if(!a||!b)continue;
+    const difference=Math.abs(Math.atan2(Math.sin(Math.atan2(b.heading[1],b.heading[0])-Math.atan2(a.heading[1],a.heading[0])),Math.cos(Math.atan2(b.heading[1],b.heading[0])-Math.atan2(a.heading[1],a.heading[0]))));
+    assert.ok(difference<1e-10,'width controls the buffer and leaves every overlapping heading unchanged');
+   }
+   let transitions=0;
+   for(let y=-80;y<81;y+=10)for(let x=-100;x<=100;x+=10){
+    const a=narrow.sample(x,y);if(!a)continue;
+    for(const [dx,dy] of [[10,0],[0,10]]){const b=narrow.sample(x+dx,y+dy);if(!b)continue;const a0=Math.atan2(a.heading[1],a.heading[0]),b0=Math.atan2(b.heading[1],b.heading[0]),change=Math.abs(Math.atan2(Math.sin(b0-a0),Math.cos(b0-a0)));assert.ok(change<Math.PI*.7,'crossing legs use a short local direction change');if(change>.01)transitions++;}
+   }
+   assert.ok(transitions>4,'the crossing fold retains a visible continuous turning zone');
+   const scaled=g.createWorldWindField(guide.map(([x,y])=>[x*30,y*30]),widths[1]*30,speed),sample=narrow.sample(20,30),sampleScaled=scaled.sample(600,900);
+   if(sample)assert.ok(Math.abs(sample.heading[0]-sampleScaled.heading[0])<1e-10&&Math.abs(sample.heading[1]-sampleScaled.heading[1])<1e-10,'geographic direction survives camera scale');
+  }
+ }
+});

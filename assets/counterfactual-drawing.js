@@ -77,10 +77,47 @@
  function windVisibility(field,time){
   return field.flatMap(arrow=>{const frame=windFrame(time,arrow.stagger);return frame.visible?[{arrow,frame}]:[];});
  }
+ function createWorldWindField(points,width=100,speed=27,options={}){
+  if(!Number.isFinite(width)||width<=0||!Number.isFinite(speed)||speed<0)throw Error('Wind dimensions and speed must be finite and positive.');
+  const source=copy(points).filter((p,i,all)=>!i||distance(p,all[i-1])>1e-7);if(source.length<1)return null;
+  const guideStart=source[0],guideEnd=source.at(-1),guideChord=distance(guideStart,guideEnd),guideUnit=guideChord?[(guideEnd[0]-guideStart[0])/guideChord,(guideEnd[1]-guideStart[1])/guideChord]:[1,0],brushTolerance=guideChord*.012;
+  const directionPoints=source.length>2&&source.length<=96&&guideChord>2*brushTolerance&&source.every(p=>Math.abs((p[0]-guideStart[0])*guideUnit[1]-(p[1]-guideStart[1])*guideUnit[0])<=brushTolerance&&(p[0]-guideStart[0])*guideUnit[0]+(p[1]-guideStart[1])*guideUnit[1]>=-brushTolerance&&(p[0]-guideStart[0])*guideUnit[0]+(p[1]-guideStart[1])*guideUnit[1]<=guideChord+brushTolerance)?[guideStart,guideEnd]:source;
+  const segments=[];
+  let unwrapped=null;
+  for(let i=1;i<directionPoints.length;i++){
+   const a=directionPoints[i-1],b=directionPoints[i],length=distance(a,b);if(length<=1e-8)continue;
+   const raw=Math.atan2(b[1]-a[1],b[0]-a[0]);
+   if(unwrapped===null)unwrapped=raw;
+   else unwrapped+=Math.atan2(Math.sin(raw-unwrapped),Math.cos(raw-unwrapped));
+   segments.push({a,b,length,angle:unwrapped});
+  }
+  if(!segments.length)return null;
+  const total=segments.reduce((n,s)=>n+s.length,0);
+  // The guide alone sets the spatial blending scale. Width and camera stay out.
+  const sigma=Math.max(total*.045,1e-6);
+  const nearest=(x,y)=>{let best=Infinity,along=0,segment=-1;for(let i=0;i<segments.length;i++){const s=segments[i],dx=s.b[0]-s.a[0],dy=s.b[1]-s.a[1],t=clamp(((x-s.a[0])*dx+(y-s.a[1])*dy)/(s.length*s.length),0,1),d=Math.hypot(x-s.a[0]-dx*t,y-s.a[1]-dy*t);if(d<best){best=d;along=t*s.length;segment=i;}}return {distance:best,along,segment};};
+  const direction=(x,y,probe)=>{
+   let sum=0,weighted=0;
+   for(let i=0;i<segments.length;i++){
+    const s=segments[i],dx=s.b[0]-s.a[0],dy=s.b[1]-s.a[1],t=clamp(((x-s.a[0])*dx+(y-s.a[1])*dy)/(s.length*s.length),0,1),d=Math.hypot(x-s.a[0]-dx*t,y-s.a[1]-dy*t),weight=s.length*Math.exp(-(d-probe.distance)/sigma);
+    if(weight<1e-15)continue;sum+=weight*s.angle;weighted+=weight;
+   }
+   const angle=weighted?sum/weighted:segments[probe.segment].angle;
+   return {heading:[Math.cos(angle),Math.sin(angle)]};
+  };
+  function sampleWind(x,y,halfWidth=width/2){
+   if(!Number.isFinite(x)||!Number.isFinite(y)||!Number.isFinite(halfWidth)||halfWidth<=0)throw Error('Wind samples need finite coordinates and a positive half-width.');
+   const probe=nearest(x,y);if(probe.distance>halfWidth)return null;const flow=direction(x,y,probe);
+   return {point:[x,y],heading:flow.heading,along:probe.along,distance:halfWidth-probe.distance,halfWidth,outerness:probe.distance/halfWidth};
+  }
+  let maxTurn=0;
+  for(let i=1;i<segments.length;i++)maxTurn=Math.max(maxTurn,Math.abs(segments[i].angle-segments[i-1].angle));
+  return Object.freeze({kind:'signed-world-wind',points:source.map(p=>p.slice()),baseHalfWidth:width/2,speed,sigma,total,sample:sampleWind,hasPoint:(x,y,halfWidth=width/2)=>nearest(x,y).distance<=halfWidth,maxTurn});
+ }
  function windField(points,width=100,spacing=undefined,speed=27,viewport,options={},mapZoom){
   if(!Number.isFinite(width)||width<=0||(spacing!=null&&!(Number.isFinite(spacing)&&spacing>0))||!Number.isFinite(speed)||speed<0)throw Error('Wind dimensions and speed must be finite and positive.');
   const line=windCenterline(points);if(!speed||!line)return[];
-  const scale=Number.isFinite(mapZoom)?clamp(1-(mapZoom-5)*.055,.68,1):viewport?clamp(Math.max(viewport[2]-viewport[0],viewport[3]-viewport[1])/1000,.7,1):1;
+  const scale=1;
   const lateral=(spacing||24)*scale,fullMax=Math.floor(width/(2*lateral)),laneCap=30,glyphLength=Math.max(7,speed*scale),period=Math.max(19,glyphLength*1.35),window=clamp(width*.23,20,55);
   const viewCenter=viewport&&[(viewport[0]+viewport[2])/2,(viewport[1]+viewport[3])/2];
   const probes=viewport?[viewCenter,[viewport[0],viewCenter[1]],[viewport[2],viewCenter[1]],[viewCenter[0],viewport[1]],[viewCenter[0],viewport[3]]]:[];
@@ -194,6 +231,6 @@
   const at=target=>{target=Math.max(0,Math.min(arcs.at(-1),target));let i=1;while(i<arcs.length-1&&arcs[i]<target)i++;const a=offshore[i-1],b=offshore[i],t=(target-arcs[i-1])/(arcs[i]-arcs[i-1]);return[a[0]+(b[0]-a[0])*t,a[1]+(b[1]-a[1])*t];};
   return Array.from({length:6},(_,i)=>[...at(start+direction*step*i),80-i*3]);
  }
- const api={smooth,sample,windField,windFrame,windVisibility,traceWindCenterline:windCenterline,traceWindPolyline:windPolyline,shadeIntensity,stormGrid,distanceField,expandMask,coastalTrack,defaultTrack:map=>{const c=map.getCenter();return coastalTrack([c.lng,c.lat],map.getZoom());}};
+ const api={smooth,sample,windField,createWorldWindField,windFrame,windVisibility,traceWindCenterline:windCenterline,traceWindPolyline:windPolyline,shadeIntensity,stormGrid,distanceField,expandMask,coastalTrack,defaultTrack:map=>{const c=map.getCenter();return coastalTrack([c.lng,c.lat],map.getZoom());}};
  if(typeof module==='object'&&module.exports)module.exports=api;else root.FireDrawing=api;
 })(typeof window==='undefined'?globalThis:window);

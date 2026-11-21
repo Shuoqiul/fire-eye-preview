@@ -7,7 +7,7 @@
   const rgb=c=>'rgb('+(Array.isArray(c)?c:[parseInt(c.slice(1,3),16),parseInt(c.slice(3,5),16),parseInt(c.slice(5,7),16)]).map(Math.round).join(', ')+')';
   const OCCUPANCY_RAMP=[[0,[37,87,43]],[.03,[37,87,43]],[.05,[47,113,54]],[.08,[111,150,65]],[.15,[183,187,62]],[.25,[224,180,51]],[.4,[221,112,45]],[.6,[169,47,43]],[1,[169,47,43]]];
   const state={open:false,event:null,result:null,view:'scenario',mode:'everyone',windowIndex:0,status:'idle'};
-  let panel,output,status,token=0,grid,features=[],geoKey='',saved,drag=null,drawing=null,suppressClick=false,brush=null,animation=0,icons=[],windArrows=[],stormSymbols=[],coast=null,coastReady=null,motionTextures=[],motionStart=0,motionCanvas=null,motionPixels=null,motionContext=null,windGeometryKey='',windGeometryTime=0;
+  let panel,output,status,token=0,grid,features=[],geoKey='',saved,drag=null,drawing=null,suppressClick=false,brush=null,animation=0,icons=[],windArrows=[],windFieldCache=null,stormSymbols=[],coast=null,coastReady=null,motionTextures=[],motionStart=0,motionCanvas=null,motionPixels=null,motionContext=null,windGeometryKey='',windGeometryTime=0;
   const S=()=>window.fireEyePreview;
   const fc=features=>({type:'FeatureCollection',features});
   const feature=(geometry,kind,properties={})=>({type:'Feature',geometry,properties:{kind,...properties}});
@@ -176,11 +176,26 @@
   }
   function refreshWind(){
     if(!state.open||state.event.type!=='high_wind')return;
-    const map=S().map,e=state.event,container=map.getContainer(),camera=map.getCenter();
-    windGeometryKey=[camera.lng,camera.lat,map.getZoom(),map.getBearing(),map.getPitch(),container.clientWidth,container.clientHeight].join('|');
-    const guide=e.windPath||[move(e.center,e.windFromDeg,150),move(e.center,(e.windFromDeg+180)%360,150)];
-    const screen=guide.map(p=>{const q=map.project(p);return[q.x,q.y];}),anchor=guide[Math.floor(guide.length/2)],west=map.project(move(anchor,270,e.radiusKm)),east=map.project(move(anchor,90,e.radiusKm)),width=Math.max(2,Math.hypot(east.x-west.x,east.y-west.y));
-    windArrows=FireDrawing.windField(screen,width,undefined,e.windMph,[0,0,container.clientWidth,container.clientHeight],{},map.getZoom()).map(a=>({...a,from:map.unproject(a.from).toArray(),to:map.unproject(a.to).toArray(),points:a.points.map(p=>map.unproject(p).toArray())}));
+    try{return refreshWindInner();}catch(error){message('Wind field unavailable: '+error.message,'error');console.error('WIND_REFRESH',error);windArrows=[];}
+  }
+  function windCameraKey(map){const box=map.getContainer(),center=map.getCenter();return JSON.stringify([center.lng,center.lat,map.getZoom(),map.getBearing(),map.getPitch(),box.clientWidth,box.clientHeight]);}
+  function refreshWindInner(){
+    const map=S().map,e=state.event,box=map.getContainer(),guide=e.windPath||[move(e.center,e.windFromDeg,150),move(e.center,(e.windFromDeg+180)%360,150)],eventKey=JSON.stringify([guide,e.center,e.windFromDeg,e.radiusKm,e.windMph]);
+    const anchor=guide[Math.floor(guide.length/2)],scale=40075016.686*Math.cos(anchor[1]*Math.PI/180),anchorMerc=maplibregl.MercatorCoordinate.fromLngLat(anchor),world=p=>{const M=maplibregl.MercatorCoordinate.fromLngLat(p);return[(M.x-anchorMerc.x)*scale,(M.y-anchorMerc.y)*scale]},toScreen=p=>map.project(new maplibregl.MercatorCoordinate(anchorMerc.x+p[0]/scale,anchorMerc.y+p[1]/scale).toLngLat());
+    if(e.windMph===0){windFieldCache={eventKey,field:null};windArrows=[];windGeometryKey=windCameraKey(map);return;}
+    if(windFieldCache?.eventKey!==eventKey)windFieldCache={eventKey,field:FireDrawing.createWorldWindField(guide.map(world),e.radiusKm*2000,e.windMph)};
+    if(!windFieldCache.field){windArrows=[];windGeometryKey=windCameraKey(map);return;}
+    const field=windFieldCache.field,spacing=32,origin=map.project(anchor),arrows=[],halfWidth=e.radiusKm*1000,steps=Math.max(2,Math.min(4,Math.round(2+(e.windMph-20)*2/38)));
+    const phaseShiftX=((origin.x%spacing)+spacing)%spacing,phaseShiftY=((origin.y%spacing)+spacing)%spacing;
+    for(let row=0;row*spacing+phaseShiftY<=box.clientHeight;row++)for(let column=0;column*spacing+phaseShiftX<=box.clientWidth;column++){
+      const sx=column*spacing+phaseShiftX,y=row*spacing+phaseShiftY,xy=map.unproject([sx,y]),seedSample=world(xy),seedHit=field.sample(seedSample[0],seedSample[1],halfWidth);
+      if(!seedHit)continue;
+      const trace=(sign)=>{let previous=null,current=[sx,y],points=[];for(let step=1;step<=steps;step++){const p=world(map.unproject(current)),probe=field.sample(p[0],p[1],halfWidth);if(!probe)break;const projected=toScreen([p[0]+probe.heading[0]*100,p[1]+probe.heading[1]*100]),unit=toScreen(p),delta=[projected.x-unit.x,projected.y-unit.y],norm=Math.hypot(...delta);if(norm<1e-6)break;const direction=[delta[0]/norm,delta[1]/norm];if(previous&&direction[0]*previous[0]+direction[1]*previous[1]<.72)break;previous=direction;const next=[current[0]+sign*3*direction[0],current[1]+sign*3*direction[1]];if(!field.sample(...world(map.unproject(next)),halfWidth))break;current=next;points.push(current);}return points;};
+      const back=trace(-1).reverse(),front=trace(1),vertices=[...back,[sx,y],...front];if(vertices.length<4)continue;const length=vertices.slice(1).reduce((sum,p,i)=>sum+Math.hypot(p[0]-vertices[i][0],p[1]-vertices[i][1]),0);if(length<10)continue;const points=vertices.map(p=>map.unproject(p).toArray());
+      const phase=((row*7+column*11+100000)%16)/16;
+      arrows.push({id:'grid-'+column+'-'+row,points,phase,lane:[sx,y],station:[sx,y],speedFactor:e.windMph,length,glyphLength:Math.min(44,length*.82)});
+    }
+    windGeometryKey=windCameraKey(map);windArrows=arrows;
   }
   function geometry() {
     if(!state.open)return;const map=S().map,e=effectiveEvent(state.event),f=[];updateIcons(e);windArrows=[];
@@ -238,15 +253,15 @@
     if(!state.open)return;
     const windMap=S().map;
     if(state.event.type==='high_wind'&&time-windGeometryTime>=125){
-      windGeometryTime=time;const c=windMap.getCenter(),box=windMap.getContainer(),key=[c.lng,c.lat,windMap.getZoom(),windMap.getBearing(),windMap.getPitch(),box.clientWidth,box.clientHeight].join('|');
-      if(key!==windGeometryKey)refreshWind();
+      windGeometryTime=time;const key=windCameraKey(windMap);
+      const eventKey=JSON.stringify([state.event.windPath||[move(state.event.center,state.event.windFromDeg,150),move(state.event.center,(state.event.windFromDeg+180)%360,150)],state.event.center,state.event.windFromDeg,state.event.radiusKm,state.event.windMph]);
+      if(windFieldCache?.eventKey!==eventKey||key!==windGeometryKey)refreshWind();
     }
     motionFrame(time);const map=S().map,canvas=$('cf-wind-animation');if(canvas){const dpr=Math.min(devicePixelRatio,2),rect=map.getContainer().getBoundingClientRect();if(canvas.width!==Math.round(rect.width*dpr)||canvas.height!==Math.round(rect.height*dpr)){canvas.width=Math.round(rect.width*dpr);canvas.height=Math.round(rect.height*dpr);}const ctx=canvas.getContext('2d');ctx.setTransform(dpr,0,0,dpr,0,0);ctx.clearRect(0,0,rect.width,rect.height);const reduced=matchMedia('(prefers-reduced-motion: reduce)').matches;
       ctx.lineCap='round';ctx.lineJoin='round';ctx.strokeStyle='#174c40';ctx.globalAlpha=.82;ctx.lineWidth=1.35;
       for(const arrow of windArrows){
-        const frame=reduced?{visible:true,start:0,end:1,head:true}:FireDrawing.windFrame(time,arrow.phase);if(!frame.visible)continue;
-        const points=arrow.points.map(p=>{const q=map.project(p);return[q.x,q.y];});
-        drawWindCurve(ctx,points,frame);
+        const frame=reduced?{visible:true,start:0,end:.82,head:true}:FireDrawing.windFrame(time,arrow.phase);if(!frame.visible)continue;
+        drawWindCurve(ctx,arrow.points.map(p=>{const q=map.project(p);return[q.x,q.y]}),frame);
       }
       ctx.globalAlpha=1;
     }animation=requestAnimationFrame(animate);
@@ -421,6 +436,6 @@
     if(researchContext||researchRequest||!['localhost','127.0.0.1'].includes(location.hostname))return;
     researchRequest=fetch('/api/research-sample').then(r=>r.ok?r.json():null).then(data=>{if(data)loadResearch(data);}).catch(()=>{}).finally(()=>{researchRequest=null;});return researchRequest;
   }
-  window.fireEyeCounterfactual={open,close:closePredictor,run:execute,startBrush,setEvent,setMode,setView,setWindow,defaults,normalize:normalized,loadResearch,get researchContext(){return researchContext;},getState:()=>state,get state(){return state;},get event(){return state.event;},get result(){return state.result;},get visuals(){return {windArrows:windArrows.length,cyclones:icons.length,brushActive:!!brush?.active,lightning:stormSymbols.filter(s=>s.kind==='lightning').length,rain:stormSymbols.filter(s=>s.kind==='rain').map(s=>({corners:s.corners,drops:s.drops})),windVectors:windArrows.map(a=>({from:a.from,to:a.to,points:a.points,phase:a.phase,contributors:a.contributors,major:a.major,arcLength:a.arcLength,speedFactor:a.speedFactor}))};}};
+  window.fireEyeCounterfactual={open,close:closePredictor,run:execute,startBrush,setEvent,setMode,setView,setWindow,defaults,normalize:normalized,loadResearch,get researchContext(){return researchContext;},getState:()=>state,get state(){return state;},get event(){return state.event;},get result(){return state.result;},get visuals(){return {windArrows:windArrows.length,cyclones:icons.length,brushActive:!!brush?.active,lightning:stormSymbols.filter(s=>s.kind==='lightning').length,rain:stormSymbols.filter(s=>s.kind==='rain').map(s=>({corners:s.corners,drops:s.drops})),windVectors:windArrows.map(a=>({from:a.points[0],to:a.points.at(-1),points:a.points,phase:a.phase,contributors:a.contributors,major:a.major,arcLength:a.arcLength,speedFactor:a.speedFactor}))};}};
   $('counterfactual-open').addEventListener('click',open);
 })();
