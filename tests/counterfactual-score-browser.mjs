@@ -63,8 +63,8 @@ for(const cell of scenario.cells){
  const outsideChanges=[];for(let i=0;i<outside.published.length;i++)if(!selected.has(i))outsideChanges.push(outside.published[i]);
  assert.equal(outsideChanges.length,outside.published.length-selected.size);
  await page.locator('[data-event="thunderstorm"]').click();await page.keyboard.press('Escape');
- const dry=await page.evaluate(async()=>{const api=fireEyeCounterfactual;api.setEvent({...api.defaults('thunderstorm'),rainIn:0,dry:true,startH:0,durationH:24});const r=await api.run(),w=r.windows[api.state.windowIndex],score=r.score.delta[api.state.windowIndex];return {span:r.scoreSpan,delta:Array.from(w.publishedBaseline).every((v,i)=>Number.isNaN(v)?Number.isNaN(score[i]):score[i]===0),text:document.querySelector('#cf-results').textContent};});
- assert.ok(dry.text.includes('Dry thunder'));assert.equal(dry.span,0);assert.equal(dry.delta,true);
+ const dry=await page.evaluate(async()=>{const api=fireEyeCounterfactual;api.setEvent({...api.defaults('thunderstorm'),rainIn:0,dry:true,startH:0,durationH:24});const r=await api.run(),w=r.windows[api.state.windowIndex],score=r.score.delta[api.state.windowIndex];return {span:r.scoreSpan,delta:Array.from(w.publishedBaseline).every((v,i)=>Number.isNaN(v)?Number.isNaN(score[i]):score[i]>=0),text:document.querySelector('#cf-results').textContent};});
+ assert.ok(dry.text.includes('Lightning contributes'));assert.ok(dry.span>0&&dry.span<.04);assert.equal(dry.delta,true);
  await page.getByRole('button',{name:'Compare'}).click();assert.equal(await page.evaluate(()=>fireEyeCounterfactual.state.view),'change');
  await page.evaluate(()=>{const api=fireEyeCounterfactual;api.setEvent({...api.defaults('thunderstorm'),rainIn:1,dry:false,startH:0,durationH:24});});
  const wet=await page.evaluate(async()=>{const api=fireEyeCounterfactual,r=await api.run();return {span:r.scoreSpan,changed:[...r.score.delta[api.state.windowIndex]].some(v=>v<0)};});

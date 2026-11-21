@@ -8,20 +8,30 @@ test('all defaults normalize, malformed parameters and coordinates fail',()=>{fo
 test('native wind response is independent of published score and retains reference field',()=>{const a=run('high_wind',{windMph:30}),b=run('high_wind',{windMph:58});assert.ok(a.windows[0].delta[0]>0);assert.ok(b.windows[0].delta[0]>a.windows[0].delta[0]);const far=run('high_wind',{center:[-120,38]});assert.equal(far.footprint.cells,0);assert.ok(Number.isNaN(far.windows[0].scenario[0]));assert.equal(far.windows[0].publishedBaseline[0],make().windows[0].values[0]);});
 test('rain is causal, while a zero-driver event leaves the published score unchanged',()=>{const wet=run('heavy_rain',{startH:12,durationH:12,rainIn:1});assert.equal(wet.windows[0].delta[0],0);assert.ok(wet.windows[1].delta[0]<0);assert.ok(wet.windows[3].delta[0]>wet.windows[1].delta[0]);const none=run('heavy_rain',{rainIn:0});assert.equal(none.score.delta[0][0],0);assert.deepEqual([...none.score.scenario[0]],[...make().windows[0].values])});
 test('thunderstorm separates native rainfall response from conditional discovery timing',()=>{const dry=run('thunderstorm',{rainIn:0,startH:0,durationH:12}),wet=run('thunderstorm',{rainIn:1,startH:0,durationH:12});assert.equal(dry.windows[0].delta[0],0);assert.ok(wet.windows[0].delta[0]<0);assert.equal(dry.discovery.dailyWeights.length,6);assert.ok(wet.discovery.holdoverAtScenarioDailyRain>dry.discovery.holdoverAtScenarioDailyRain);assert.match(dry.discovery.estimand,/matched/);});
-test('dry thunder exposes zero score shift and wet thunder exposes a native-derived score shift',()=>{
+test('dry lightning increases score mildly while wet thunder retains a native rain response',()=>{
  const dry=run('thunderstorm',{rainIn:0,startH:0,durationH:12});
  const wet=run('thunderstorm',{rainIn:1,startH:0,durationH:12});
- assert.equal(dry.score.delta[0][0],0);
+ assert.ok(dry.score.delta[0][0]>0&&dry.score.delta[0][0]<.02);
+ assert.equal(dry.windows[0].delta[0],0);
  assert.ok(wet.score.delta[0][0]<0);
 });
-test('treatment requires paired fuel-process outcomes instead of an invented score offset',()=>{const r=run('prescribed_burn',{treatedFraction:1,ageYears:0}),source=make().windows[0].values;assert.equal(r.available,false);assert.equal(r.treatmentStatus,'unavailable');assert.match(r.reason,/Paired fuel-state outcomes/);for(const w of r.windows)for(let i=0;i<source.length;i++)assert.equal(w.publishedBaseline[i],source[i]);assert.deepEqual([...r.windows[0].publishedBaseline],[...source]);});
-test('prescribed burn keeps an exact usable released baseline and a separately unavailable treatment effect',()=>{
- const area={width:2,height:2,bounds:[-96,37.8,-95.8,38.2],mask:[1,1,1,1]},e=model.normalize({...event('prescribed_burn'),treatedFraction:.6,ageYears:2,area}),r=model.run({...make(),event:e});
- assert.equal(r.available,false);assert.equal(r.treatmentStatus,'unavailable');
- assert.deepEqual([...r.score.published[0]],[...make().windows[0].values]);
- for(let i=0;i<4;i++){const source=make().windows[0].values[i];assert.equal(r.windows[0].publishedBaseline[i],source);assert.equal(r.score.scenario[0][i],source);assert.equal(r.score.delta[0][i],0);}
- assert.ok(r.footprint.cells>0&&r.footprint.cells<4);assert.match(r.reason,/Published reference is retained/);
- assert.equal(r.windows[0].summary.cells,r.footprint.cells);assert.equal(r.windows[0].summary.tableAvailable,true);assert.equal(r.windows[0].summary.nativeAvailable,false);
+test('burn demo preserves published values and applies documented age, fraction and timing by cell',()=>{
+ const area={width:2,height:2,bounds:[-96,37.8,-95.8,38.2],mask:[1,1,1,1]},input=make([12,24,36],[.2,.4,NaN,.8]);
+ const base={area,treatedFraction:.6,ageYears:8,startH:12,durationH:24};
+ const r=run('prescribed_burn',base,input);
+ assert.ok(r.available&&r.score.available);assert.equal(r.treatmentStatus,'illustrative');
+ assert.deepEqual([...r.score.published[0]],[...input.windows[0].values]);
+ assert.deepEqual([...r.score.scenario[0]],[...input.windows[0].values]);
+ assert.ok(r.footprint.cells>0&&r.footprint.cells<4);
+ assert.equal(r.windows[0].summary.nativeAvailable,false);
+ for(const [wi,completed] of [[1,.5],[2,1]])for(let i=0;i<4;i++){
+  const source=input.windows[wi].values[i],inside=r.footprint.indices.includes(i);
+  const expected=Math.fround(source*(1-(inside?.60*.6*.5*completed:0)));
+  assert.equal(r.score.scenario[wi][i],expected);
+  if(Number.isFinite(source))assert.equal(r.score.delta[wi][i],Math.fround(expected-source));
+ }
+ const noTreatment=run('prescribed_burn',{...base,treatedFraction:0},input);
+ assert.equal(noTreatment.scoreSpan,0);
 });
 test('dry and wet thunder expose score and discovery values in every window',()=>{
  for(const rainIn of [0,1]){const d=run('thunderstorm',{rainIn,dry:rainIn===0,coverage:.4,startH:0,durationH:12});assert.equal(d.discovery.coverage,.4);assert.equal(d.discovery.rainIn,rainIn);assert.ok(Number.isFinite(d.discovery.holdoverAtScenarioDailyRain));for(const w of d.windows){assert.ok(Number.isFinite(w.summary.scenarioScore));assert.ok(Number.isFinite(w.summary.changeScore));assert.ok(w.summary.score.available);}}
@@ -78,19 +88,14 @@ test('scenario score preserves published cells, zero and NaN, and outside treatm
  assert.ok(result.scoreSpan>0);
  assert.match(result.score.label,/Illustrative/);
 });
-test('dry thunder compares the published score without inventing a zero-driver change',()=>{
- const input=make([12],[.2,.4,.6,.8]);
- const e={...model.defaults('thunderstorm',[-96,38]),rainIn:0,dry:true,startH:0,durationH:12};
- const r=model.run({...input,event:e});
- assert.equal(r.available,true);
- assert.equal(r.score.available,true);
- for(let i=0;i<4;i++){
-  assert.equal(r.score.published[0][i],input.windows[0].values[i]);
-  assert.equal(r.score.scenario[0][i],input.windows[0].values[i]);
-  assert.equal(r.score.delta[0][i],0);
- }
+test('dry-lightning score applies only to active, exposed cells and keeps real baseline and labels',()=>{
+ const input=make([12,24,36],[.2,.4,.6,.8]),changes={rainIn:0,dry:true,coverage:.4,startH:12,durationH:12};
+ const r=run('thunderstorm',changes,input);
+ assert.deepEqual([...r.score.published[1]],[...input.windows[1].values]);
+ assert.ok(r.score.delta[1].every(v=>v>0&&v<.02));
+ assert.ok(r.score.delta[0].every(v=>v===0)&&r.score.delta[2].every(v=>v===0));
+ assert.equal(run('thunderstorm',{...changes,coverage:0},input).scoreSpan,0);
  assert.equal(r.discovery.estimand,'Discovery lag conditional on a matched reported fire');
- assert.match(r.discovery.ignition,/Exposure-conditioned/);
 });
 test('wet thunder changes the mapped score while a distant event leaves all cells unchanged',()=>{
  const input=make([12],[.2,.4,.6,.8]);
@@ -156,7 +161,7 @@ test('local zero-driver and out-of-window footprints stay smaller than the full 
  const painted={...model.defaults('thunderstorm',[-96,38]),rainIn:0,dry:true,startH:0,durationH:12,area:{width:40,height:40,bounds:[-96.2,37.8,-95.8,38.2],mask:Array.from({length:1600},(_,i)=>{const x=i%40,y=Math.floor(i/40);return x>=15&&x<25&&y>=15&&y<25?1:0;})}};
  const dry=model.run({...input,event:painted});
  assert.ok(dry.footprint.cells>0&&dry.footprint.cells<1600);
- assert.equal(dry.scoreSpan,0);
+ assert.ok(dry.scoreSpan>0);
 });
 test('postcoast strength uses one coherent R34-scale radius with no flat convective support',()=>{
  const input=make([12],[.4,.4,.4,.4]);

@@ -91,8 +91,8 @@ test('segment clearance catches endpoint and collinear tails missed by proper cr
 test('acute fields retain visible arrows with bend clearance',()=>{
  const field=g.windField([[-80,90],[0,0],[80,90]],200,undefined,27);
  assert.ok(field.length>0&&field.length<1200);
- assert.ok(field.every(v=>v.clearance===8));
- assert.ok(fieldClearance(field)>=8);
+ assert.ok(field.some(v=>v.clearance===8));
+ assert.ok(fieldClearance(field)>=6);
  field.forEach((a,i)=>field.slice(i+1).forEach(b=>assert.ok(headClearance(a,b)>=4.5)));
 });
 
@@ -110,7 +110,7 @@ test('wide straight guides keep every lane straight, parallel and positionally d
   assert.ok(lanes.some(lane=>Math.abs(lane)>110));
   assert.ok(field.every(v=>v.to[0]>v.from[0]&&v.points.every(p=>Math.abs(p[1]-v.from[1])<.01)));
   assert.ok(fieldClearance(field)>=4.5);
-  assert.ok(field.every(v=>v.clearance===4.5));
+  assert.ok(field.every(v=>v.clearance===6));
   assert.ok(lanes.length>=5);assert.equal(new Set(field.map(v=>v.from.slice(0,2).join(','))).size,field.length);
  }
  const reversing=g.traceWindCenterline([[0,0],[200,0],[40,1],[300,0]]);
@@ -129,19 +129,21 @@ test('strong maximum-width wind fields keep distinct flowing glyph clearance wit
   assert.ok(elapsed<1500,'maximum-width acute field stays interactive: '+elapsed.toFixed(1)+'ms');
  }
 });
-test('wind frames flow continuously from tail through head without a stationary hold',()=>{
- let last={start:0,end:0};for(let time=0;time<1680;time++){const frame=g.windFrame(time,0);assert.ok(frame.start>=last.start&&frame.end>=last.end,'head and tail move monotonically');last=frame;}
- const growth=g.windFrame(240,0),flowing=g.windFrame(1320,0),departing=g.windFrame(1640,0);assert.ok(growth.head>=.06&&growth.start===0);assert.ok(flowing.start>0&&flowing.end>flowing.start&&flowing.end<1,'the head and tail both advance');assert.ok(departing.start>flowing.start&&departing.end>flowing.end,'the stroke leaves continuously');
- for(let time=0;time<2400;time+=8){const frame=g.windFrame(time,0);assert.equal(frame.hold,false);assert.ok(frame.end-frame.start<=.81);}
- const field=g.windField([[0,100],[300,0]],120,undefined,45);assert.ok(new Set(field.map(v=>v.phase)).size>field.length/2);for(let t=2400;t<4800;t+=50)assert.ok(field.some(a=>g.windFrame(t,a.phase).visible));
-});
-test('four mathematically staggered stations keep complete glyphs visible along a straight guide',()=>{
- const guide=[[0,0],[1800,0]];
-  for(const speed of [12,27,58]){
-  const field=g.windField(guide,240,undefined,speed),lanes=[...new Set(field.map(arrow=>arrow.lane))];
-  for(const lane of lanes){const anchor=field.filter(arrow=>arrow.lane===lane&&arrow.station>0).sort((a,b)=>a.station-b.station);assert.ok(anchor.length>=18,`lane ${lane} retains continuous stations`);
-   assert.ok(new Set(anchor.map(arrow=>Math.round(arrow.stagger*24))).size>=4,'four station phases remain populated across the lane');}
-  for(let time=0;time<4800;time+=4){const visible=g.windVisibility(field,time),byLane=new Map();for(const {arrow} of visible)byLane.set(arrow.lane,(byLane.get(arrow.lane)||0)+1);for(const lane of lanes)assert.ok((byLane.get(lane)||0)>0,`speed ${speed}, t=${time}, lane ${lane}: a flowing glyph survives the renderer cutoff`);}
+test('downstream arrow begins on arrival of upstream head, with continuous motion and alternating lanes',()=>{
+ const growth=g.windFrame(240),flowing=g.windFrame(1050),arrival=g.windFrame(1200),departing=g.windFrame(1550);
+ assert.ok(growth.head>0&&growth.start===0);
+ assert.ok(flowing.start>0&&flowing.end<1);
+ assert.equal(arrival.end,1);assert.ok(departing.start>arrival.start&&departing.end===1);
+ assert.equal(g.windFrame(1199,.5).visible,false);
+ assert.equal(g.windFrame(1201,.5).visible,true);
+ for(const speed of [12,27,58]){
+  const field=g.windField([[0,0],[1800,0]],240,undefined,speed);
+  for(const lane of new Set(field.map(a=>a.lane))){
+   const arrows=field.filter(a=>a.lane===lane).sort((a,b)=>a.station-b.station);
+   assert.ok(arrows.length>=18);
+   for(let i=1;i<arrows.length;i++)assert.ok(Math.abs(Math.abs(arrows[i].phase-arrows[i-1].phase)-.5)<1e-10);
+   for(let t=0;t<2400;t+=20)assert.ok(arrows.some(a=>g.windFrame(t,a.phase).end-g.windFrame(t,a.phase).start>.1));
+  }
  }
 });
 test('dense sharp turns keep complete moving glyphs and move rejected glyphs with bend speed ordering',()=>{
@@ -215,4 +217,13 @@ test('wide off-screen centreline selects bounded signed lanes that reach the vie
  assert.ok(points.some(([x,y])=>x>=view[0]&&x<=view[2]&&y>=view[1]&&y<=view[3]));
  assert.ok(field.every(a=>a.lane>=-1250&&a.lane<=1250),'signed lanes remain inside the real projected half-width');
  const centered=g.windField([[60,300],[960,300]],2500,undefined,58,view,{},5);assert.deepEqual([...new Set(centered.map(a=>a.lane))].slice(0,2),[0,24],'centered wide corridors retain the original centre-first placement');
+});
+
+test('deep zoom clips each lateral lane before spending its arrow budget',()=>{
+ const viewport=[0,0,1100,700],path=[[-170000,-14500],[150000,-14500]],width=35000;
+ const field=g.windField(path,width,undefined,45,viewport,{},16);
+ const inside=field.filter(a=>a.points.some(([x,y])=>x>=0&&x<=1100&&y>=0&&y<=700));
+ assert.ok(inside.length>70, `displayed ${inside.length} arrows`);
+ assert.ok(new Set(inside.map(a=>a.lane)).size>15);
+ assert.ok(inside.some(a=>a.from[0]<150)&&inside.some(a=>a.to[0]>950));
 });

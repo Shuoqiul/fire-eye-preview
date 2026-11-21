@@ -48,7 +48,7 @@
   if(!S?.active)return;const selected=R.active?.source_id===S.active.run.source_id&&R.active?.issue_time_utc===S.manifest.issue_time_utc,visible=S.riskVisible!==false,z=map.getZoom();
   // Stage the new tiles at zero opacity. Only one forecast representation
   // contributes color; no crossfade or default 300 ms opacity transition.
-  const loaded=layerId&&map.getSource(layerId)&&map.isSourceLoaded(layerId),blend=R.status==='ready'&&selected&&loaded&&z>=11?1:0;
+  const loaded=layerId&&map.getSource(layerId)&&map.isSourceLoaded(layerId),blend=!S.nativeRiskOnly&&R.status==='ready'&&selected&&loaded&&z>=11?1:0;
   S.refinementMix=blend;S.syncHeatmapDisplay?.();
   if(layerId&&map.getLayer(layerId)){
    const visibility=z>=10&&visible?'visible':'none',alpha=visible?blend*(S.riskOpacity??1)*(S.geographyRiskFactor??1):0;

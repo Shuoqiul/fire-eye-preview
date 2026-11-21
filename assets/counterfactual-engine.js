@@ -29,9 +29,11 @@
     baselineGate:'Contemporaneous PUBLISHED occupancy score; it is an illustrative receptivity gate, not measured fuel dryness.',
     rain:'An outcome percent change is unavailable; the native FFMC/ISI moisture response remains a separate diagnostic.',
     weakStorm:'Below the 34 kt R34 validity floor, a tapered radial core uses the 34 kt radius shape at reduced wind and footprint intensity.',
-    lightning:'Coverage and discovery timing remain exposure and conditional-discovery diagnostics.',
+    lightning:'The lightning score overlay uses an illustrative odds adjustment. Conditional discovery remains a separate diagnostic.',
     uncertainty:'The bridge is illustrative and requires a model-derived paired rerun for causal coefficients.'
   });
+  const BURN_DEMO=Object.freeze({maximumReduction:.60,halfLifeYears:8});
+  const LIGHTNING_DEMO=Object.freeze({maximumLogOdds:.16,rainScaleIn:.25});
   const METADATA = Object.freeze({
     endpoint:'Initial spread index (ISI)',unit:'ISI',version:'20261117-research',
     evidence:'Published hourly FFMC/ISI mechanisms; source-specific storm fields; conditional discovery fit.',
@@ -350,9 +352,13 @@
     const raw=kappa*Math.log((1+scenarioISI)/(1+baselineISI));
     const response=Math.max(-1,Math.min(1,raw));
     if(response===0)return Object.freeze({baseline:score,scenario:score,delta:0,response:0,illustrative:true,label:SCORE_ADAPTER.name});
-    const ratio=Math.exp(response);
-    const scenario=score*ratio/(1-score+score*ratio);
+    const scenario=shiftOdds(score,response);
     return Object.freeze({baseline:score,scenario,delta:scenario-score,response,illustrative:true,label:SCORE_ADAPTER.name});
+  }
+  function shiftOdds(score,shift){
+    if(shift===0||score===0||score===1)return score;
+    const odds=Math.exp(shift);
+    return score*odds/(1-score+score*odds);
   }
   function trackCenter(e, leadHours) {
     // Track points are 12-hour positions. validHours places the first point on the
@@ -501,10 +507,10 @@
     if (!e) {
       return wins.length ? allGridCells(grid, wins) : [];
     }
-    const unavailable=e.type==='prescribed_burn';
-    const zeroDriver=e.type==='high_wind'&&!(e.windMph>0)||e.type==='thunderstorm'&&!(e.coverage>0&&e.rainIn>0)||e.type==='heavy_rain'&&!(e.rainIn>0);
+    const burn=e.type==='prescribed_burn';
+    const zeroDriver=e.type==='high_wind'&&!(e.windMph>0)||e.type==='thunderstorm'&&!(e.coverage>0)||e.type==='heavy_rain'&&!(e.rainIn>0);
     const positiveSelect=(zeroDriver||!(e.startH+e.durationH>0&&e.startH<Math.max(...wins.map(w=>w.leadHours))))&&!e.area;
-    if(unavailable){
+    if(burn){
       const region=eventRegion(e),selected=[];
       for(let row=0;row<grid.height;row++)for(let col=0;col<grid.width;col++){
         const i=row*grid.width+col,t=grid.transform;
@@ -612,8 +618,9 @@
     }
     const maxLead=Math.max(...wins.map(w=>w.leadHours));
     const context=input.context||null,weatherAt=input.weatherAt||context?.weatherAt||(()=>({tempC:25,rhPct:30,uMs:10/3.6,vMs:0,rainMm:0,initialFFMC:85}));
-    const treatmentStatus=e?.type==='prescribed_burn'?'unavailable':e?'available':'reference';
-    const available=treatmentStatus==='unavailable'?false:true;
+    const burn=e?.type==='prescribed_burn';
+    const treatmentStatus=burn?'illustrative':e?'available':'reference';
+    const available=true;
     const scoreBridge=e&&TYPES.includes(e.type)?{
       kind:'Illustrative bounded score bridge · published occupancy units',
       name:SCORE_ADAPTER.name,version:SCORE_ADAPTER.version,coefficients:SCORE_ADAPTER.coefficients,
@@ -625,7 +632,7 @@
     const delta=wins.map(w=>Float32Array.from(w.values,v=>Number.isNaN(v)?NaN:0));
     const forcing=context?'snapshot-held':'reference-weather';
     let rainDomainHours=0;
-    if(e&&available)for(const cell of selected) {
+    if(e&&!burn)for(const cell of selected) {
       const first=weatherAt(cell.i,0);if(!first)continue;
       let baseFFMC=first.initialFFMC??85,scenarioFFMC=baseFFMC,totalRain=0;
       const zeroDriver=cell.diagnostic===true||e.type==='high_wind'&&e.windMph===0;
@@ -685,7 +692,19 @@
     }
     if(scoreBridge)for(const [wi,w] of out.entries())for(const cell of selected){
       const source=wins[wi].values[cell.i];
-      if(cell.diagnostic||cell.footprint!==undefined&&cell.footprint<P.footprintThreshold){scenario[wi][cell.i]=source;delta[wi][cell.i]=Number.isNaN(source)?NaN:0;}
+      if(!finite(source))continue;
+      if(burn){
+        const fraction=clamp((w.leadHours-e.startH)/e.durationH,0,1);
+        const reduction=BURN_DEMO.maximumReduction*e.treatedFraction*Math.pow(.5,e.ageYears/BURN_DEMO.halfLifeYears)*fraction;
+        scenario[wi][cell.i]=source*(1-reduction);
+      }else if(cell.diagnostic||cell.footprint!==undefined&&cell.footprint<P.footprintThreshold){
+        scenario[wi][cell.i]=source;
+      }else if(e.type==='thunderstorm'){
+        const exposure=(cell.footprint??0)*e.coverage*(activeHours(e,w.leadHours)/12);
+        const shift=LIGHTNING_DEMO.maximumLogOdds*exposure*Math.exp(-e.rainIn/LIGHTNING_DEMO.rainScaleIn);
+        scenario[wi][cell.i]=shiftOdds(scenario[wi][cell.i],shift);
+      }
+      delta[wi][cell.i]=scenario[wi][cell.i]-source;
     }
     let span=0,maximum=0,scoreSpan=0;
     for(const [wi,w] of out.entries()) {
@@ -700,7 +719,7 @@
       w.summary={baseline:count?baseline/count:NaN,scenario:count?scenario/count:NaN,delta:count?(scenario-baseline)/count:NaN,
         relative:baseline?(scenario-baseline)/baseline:null,cells:count,areaKm2:count*area,publishedReference:selected.length?published/selected.length:NaN,
         rawReference:context?.fields&&selected.length?raw/selected.length:null};
-      if(treatmentStatus==='unavailable'){
+      if(burn){
         const finitePublished=selected.filter(c=>finite(wins[wi].values[c.i]));
         w.summary={cells:finitePublished.length,areaKm2:finitePublished.length*area,publishedReference:finitePublished.length?finitePublished.reduce((n,c)=>n+wins[wi].values[c.i],0)/finitePublished.length:NaN,
           baseline:NaN,scenario:NaN,delta:NaN,relative:null,rawReference:context?.fields&&finitePublished.length?finitePublished.reduce((n,c)=>n+context.fields.rawBaseline[c.i],0)/finitePublished.length:null,
@@ -715,7 +734,7 @@
       discovery:'Conditional discovery and holdover timing',
       ignition:'Exposure-conditioned ignition is not identified by this window exposure',
       assumption:'Scenario daily rain sensitivity; a full exposure model supplies ignition probability.',rainIn:e.rainIn,coverage:e.coverage,
-      scoreResponseAvailable:e.rainIn>0&&e.coverage>0}:null;
+      scoreResponseAvailable:e.coverage>0}:null;
     for(const [wi,w] of out.entries())w.summary.score={published:scoreMean(wi,'published'),scenario:scoreMean(wi,'scenario'),delta:scoreMean(wi,'delta'),available:!!scoreBridge&&available};
     for(const [wi,w] of out.entries())if(scoreBridge&&available){
       const valid=[];for(const i of selected.map(c=>c.i))if(finite(delta[wi][i]))valid.push(published[wi][i]);
@@ -731,9 +750,9 @@
       return 0;
     }
     return {windows:out,span,scoreSpan,nativeUnit:'ISI',maximum,available,treatmentStatus,endpoint:!e?'published_reference':available?'published_score_scenario':'published_reference',unit:'score',
-      display:{name:'Illustrative bounded published-score scenario',unit:'published occupancy units',baseline:'same released bins and map rendering as the published forecast',scenario:'same palette and release scale, with a nonzero paired-ISI bridge only inside the event footprint',outside:'published values unchanged, zero delta'},
+      display:{name:'Illustrative bounded published-score scenario',unit:'published occupancy units',baseline:'same released bins and map rendering as the published forecast',scenario:'same palette and release scale, with the event response inside the selected footprint',outside:'published values unchanged, zero delta'},
       calibration:{scoreBridge:'illustrative',nativeMechanism:'FFMC/ISI conditional diagnostic',horizon:'published forecast window'},
-      score:{published,scenario,delta,available:!!scoreBridge&&available,label:scoreBridge&&available?SCORE_ADAPTER.name:null,adapter:SCORE_ADAPTER},
+      score:{published,scenario,delta,available:!!scoreBridge,label:burn?'Illustrative prescribed-burn score':scoreBridge?SCORE_ADAPTER.name:null,adapter:burn?BURN_DEMO:SCORE_ADAPTER},
       reason:available?null:'Paired fuel-state outcomes are unavailable for this sample. Published reference is retained; treatment effect is unavailable.',
       forcing,assumptions:context?.assumptions||{initialFFMC:85,weather:'Reference 25 °C, RH 30%, 10 km/h, zero background rain'},
       discovery,rainDomainHours,cycloneWindAssumption:e?.type==='hurricane'?'Conditional 1-min peak-wind stress forcing; an interval-mean conversion requires calibration.':null,

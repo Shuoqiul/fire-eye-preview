@@ -90,6 +90,22 @@ try{
  assert.ok(clearance.count>20&&clearance.min>1.7,`full arrowheads and shafts have room at the crowded bend: ${JSON.stringify(clearance)}`); console.log(`Tight bend: ${clearance.count} complete arrows, closest strokes ${clearance.min.toFixed(2)} CSS px apart`);
  await page.screenshot({path:directory+'/wind-bend-clearance.png'});
  await page.emulateMedia({reducedMotion:'no-preference'});
+ const completePixels=async()=>page.evaluate(()=>{
+  const canvas=document.querySelector('#cf-wind-animation'),a=canvas.getContext('2d').getImageData(canvas.width*.51,0,canvas.width*.48,canvas.height).data;
+  let n=0;for(let i=3;i<a.length;i+=4)if(a[i]>100)n++;return n;
+ });
+ await page.evaluate(()=>{
+  const cf=fireEyeCounterfactual,e=cf.defaults('high_wind',[-84.3,30.45]);
+  cf.setEvent({...e,windPath:[[-88,30.45],[-81,30.45]],radiusKm:100,windMph:45});
+ });
+ for(const zoom of [10,13,16]){
+  // The path runs well above the canvas at z13/16, yet the 200 km corridor covers it.
+  await page.evaluate(z=>fireEyePreview.map.jumpTo({center:[-84.3,30.18],zoom:z,padding:{top:0,bottom:0,left:0,right:0}}),zoom);
+  await page.waitForTimeout(220);
+  const ink=await completePixels();
+  assert.ok(ink>400,`z${zoom}: only ${ink} visible painted wind pixels`);
+ }
+ await page.evaluate(()=>fireEyePreview.map.jumpTo({center:[-83.6,32.5],zoom:7}));
  await page.locator('[data-event="heavy_rain"]').click();await page.mouse.move(820,600);await page.mouse.down();await page.mouse.move(1050,660,{steps:15});await page.mouse.move(1010,760,{steps:10});await page.mouse.up();await page.getByRole('button',{name:'Confirm',exact:true}).click();
  assert.ok(await page.evaluate(()=>fireEyeCounterfactual.event.area.mask.some(Boolean)));
  await page.screenshot({path:directory+'/area-desktop.png'});
