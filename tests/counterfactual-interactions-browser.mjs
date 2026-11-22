@@ -5,7 +5,7 @@ const base=process.env.CF_URL||'http://127.0.0.1:5199',browser=await chromium.la
 page.on('pageerror',e=>errors.push(e.message));
 try{
  await page.route('**/*',r=>new URL(r.request().url()).origin===new URL(base).origin?r.continue():r.abort());
- await page.goto(base);await page.waitForFunction(()=>window.fireEyePreview?.ready&&window.fireEyeCounterfactual,null,{timeout:60000});await page.evaluate(()=>fireEyeCounterfactual.open());
+ await page.goto(base);await page.waitForFunction(()=>window.fireEyePreview?.ready&&window.FireDrawing?.createWorldWindField&&window.fireEyeCounterfactual,null,{timeout:60000});await page.evaluate(()=>fireEyeCounterfactual.open());
  for(const type of ['hurricane','high_wind','heavy_rain','thunderstorm','prescribed_burn']){
   await page.locator(`[data-event="${type}"]`).click();assert.equal(await page.locator('.cf-brush-canvas').count(),1);assert.equal(await page.locator('.cf-brush-tools').count(),1);assert.equal(await page.locator('#cf-run').isVisible(),true);
   assert.equal(await page.evaluate(()=>fireEyeCounterfactual.visuals.brushActive),true);
@@ -41,12 +41,57 @@ try{
  await page.mouse.move(760,610);await page.mouse.down();for(const p of [[820,611],[880,609],[940,612],[1000,609],[1060,611],[1120,610]])await page.mouse.move(...p,{steps:8});await page.mouse.up();
  await page.getByRole('button',{name:'Confirm',exact:true}).click();
  await page.locator('#cf-radiusKm').evaluate(el=>{el.value=200;el.dispatchEvent(new Event('input'));});
+ // Each station's first subpath is its bent shaft; the remaining two are
+ // short arrowhead wings. Compare all shafts in one common viewport fixture.
+ const readShafts=()=>page.evaluate(async()=>{
+  const pixelRatio=document.getElementById('cf-wind-animation').width/document.getElementById('cf-wind-animation').getBoundingClientRect().width;
+  const ctx=document.getElementById('cf-wind-animation').getContext('2d'),{beginPath,moveTo,lineTo,stroke}=ctx,out=[];
+  let paths=[];
+  ctx.beginPath=function(){paths=[];out.push(paths);return beginPath.call(this)};
+  ctx.moveTo=function(x,y){paths.push([]);paths.at(-1).push([x,y]);return moveTo.call(this,x,y)};
+  ctx.lineTo=function(x,y){paths.at(-1).push([x,y]);return lineTo.call(this,x,y)};
+  ctx.stroke=function(){return stroke.call(this)};
+  try{await new Promise(requestAnimationFrame);}finally{Object.assign(ctx,{beginPath,moveTo,lineTo,stroke});}
+  return out.map(p=>p[0]).filter(p=>p?.length>=2).map(p=>pixelRatio*p.reduce((n,q,i)=>n+(i?Math.hypot(q[0]-p[i-1][0],q[1]-p[i-1][1]):0),0));
+ });
+ const stationShafts=(await readShafts()).sort((a,b)=>a-b);
+ assert.ok(stationShafts.length>20,'the live app draws station shafts: '+stationShafts.length);
+ await page.locator('[data-preset="Windy"]').click();await page.waitForTimeout(100);
+ await page.emulateMedia({reducedMotion:'no-preference'});
+ const traffic=await page.evaluate(async()=>{
+  const ctx=document.getElementById('cf-wind-animation').getContext('2d'),lengths=[];
+  for(let k=0;k<9;k++){
+   const {beginPath,moveTo,lineTo,stroke}=ctx;let all=[];ctx.beginPath=function(){all.push([]);return beginPath.call(this)};ctx.moveTo=function(x,y){all.at(-1).push([x,y]);return moveTo.call(this,x,y)};ctx.lineTo=function(x,y){all.at(-1).push([x,y]);return lineTo.call(this,x,y)};ctx.stroke=function(){return stroke.call(this)};
+   try{await new Promise(requestAnimationFrame);}finally{Object.assign(ctx,{beginPath,moveTo,lineTo,stroke});}
+   lengths.push(all.reduce((n,a)=>n+a.length,0));
+  }
+  return lengths;
+ });
+ assert.ok(new Set(traffic).size>1&&traffic.every(n=>n>0),'animated app traffic changes continuously: '+traffic);
+ await page.setViewportSize({width:1440,height:960});await page.evaluate(()=>fireEyePreview.map.jumpTo({center:[-98,38],zoom:6}));await page.emulateMedia({reducedMotion:'reduce'});
+ const priorEvent=await page.evaluate(()=>structuredClone(fireEyeCounterfactual.event));
+ await page.evaluate(()=>{const api=fireEyeCounterfactual,event=api.defaults('high_wind',[-98,38]);api.setEvent({...event,windPath:[[-110,38],[-86,38]],radiusKm:200});});
+ await page.waitForFunction(()=>fireEyeCounterfactual.visuals.windVectors.length>0,null,{timeout:5000});
+ const altZoom=await page.evaluate(()=>{const map=fireEyePreview.map,stateMap=map;const original=map.isStyleLoaded;map.isStyleLoaded=()=>false;stateMap.jumpTo({zoom:stateMap.getZoom()+1});return new Promise(resolve=>setTimeout(()=>{map.isStyleLoaded=original;resolve({zoom:map.getZoom(),arrows:fireEyeCounterfactual.visuals.windVectors.length,zoomend:map.getZoom()>6.9});},400));});
+ assert.ok(altZoom.arrows>20,'wind geometry refreshes while style remains unloaded: '+JSON.stringify(altZoom));
+ await page.evaluate(()=>fireEyePreview.map.jumpTo({center:[-98,38],zoom:6}));await page.waitForTimeout(400);
+ const median=a=>a.slice().sort((x,y)=>x-y)[Math.floor(a.length/2)]||0,presetStrokes=[];
+ for(const name of ['Breezy','Windy','Strong','Damaging']){
+  await page.locator(`[data-preset="${name}"]`).click();await page.waitForFunction(expected=>fireEyeCounterfactual.event.windMph===expected,{Breezy:20,Windy:27,Strong:45,Damaging:58}[name]);
+  const shafts=await readShafts();assert.ok(shafts.length>20,name+' renders live shafts');
+  presetStrokes.push(median(shafts));
+ }
+ assert.ok(presetStrokes.every((v,i,a)=>!i||v>a[i-1]+5),'live preset shaft medians grow: '+JSON.stringify(presetStrokes));
+ await page.evaluate(prior=>fireEyeCounterfactual.setEvent(prior),priorEvent);
+ await page.waitForFunction(()=>document.getElementById('cf-radiusKm')?.value==='100');await page.emulateMedia({reducedMotion:'no-preference'});
+ await page.locator('#cf-radiusKm').evaluate(el=>{el.value='200';el.dispatchEvent(new Event('input',{bubbles:true}));});
+ await page.waitForFunction(()=>fireEyeCounterfactual.event.radiusKm===100);
  const zoomDensity=await page.evaluate(()=>{const view=[0,0,1440,960],f=FireDrawing.windField([[40,760],[350,650],[580,260],[810,150]],350,undefined,58,view,{},8);return{count:f.length,average:f.reduce((n,a)=>n+a.glyphLength,0)/f.length,lanes:new Set(f.map(a=>a.lane)).size};});
  assert.ok(zoomDensity.count>=100&&zoomDensity.average>=35&&zoomDensity.average<58&&zoomDensity.lanes>12,'same viewport zoom keeps legible glyphs and lateral coverage: '+JSON.stringify(zoomDensity));
  const turn=await page.evaluate(()=>{const guide=FireDrawing.sample([[100,760],[520,650],[760,260],[980,150]],96),f=FireDrawing.windField(guide,300,undefined,45,[0,0,1440,960],{},7);return f.filter(a=>a.lane===0).sort((a,b)=>a.station-b.station).map(a=>Math.round(Math.atan2(a.to[1]-a.from[1],a.to[0]-a.from[0])*180/Math.PI));});
  assert.ok(turn.length>8&&new Set(turn).size>=6,'SW-W-NW field has intermediate headings: '+turn.join(','));
  const straight=await page.evaluate(()=>{const project=p=>fireEyePreview.map.project(p),arrows=fireEyeCounterfactual.visuals.windVectors.map(v=>v.points.map(project)),heading=a=>Math.atan2(a.at(-1).y-a[0].y,a.at(-1).x-a[0].x),guide=heading(fireEyeCounterfactual.event.windPath.map(project));return {width:fireEyeCounterfactual.event.radiusKm*2,span:Math.max(...arrows.map(a=>a[0].y))-Math.min(...arrows.map(a=>a[0].y)),aligned:arrows.every(a=>a.at(-1).x>a[0].x&&Math.abs(heading(a)-guide)<.035)};});
- assert.equal(straight.width,200);assert.ok(straight.span>72,'wide corridor retains outer lanes');assert.ok(straight.aligned,'wide outer arrows follow the drawn heading');
+ assert.equal(await page.locator('#cf-radiusKm').inputValue(),'200');assert.equal(straight.width,200);assert.ok(straight.span>72,'wide corridor retains outer lanes');assert.ok(straight.aligned,'wide outer arrows follow the drawn heading');
  await page.screenshot({path:directory+'/wind-straight-wide.png'});
  await draw.click();
  await page.mouse.move(773,755);await page.mouse.down();for(const p of [[970,460],[1130,670]])await page.mouse.move(...p,{steps:18});await page.mouse.up();

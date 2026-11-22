@@ -82,27 +82,52 @@
   const source=copy(points).filter((p,i,all)=>!i||distance(p,all[i-1])>1e-7);if(source.length<1)return null;
   const guideStart=source[0],guideEnd=source.at(-1),guideChord=distance(guideStart,guideEnd),guideUnit=guideChord?[(guideEnd[0]-guideStart[0])/guideChord,(guideEnd[1]-guideStart[1])/guideChord]:[1,0],brushTolerance=guideChord*.012;
   const directionPoints=source.length>2&&source.length<=96&&guideChord>2*brushTolerance&&source.every(p=>Math.abs((p[0]-guideStart[0])*guideUnit[1]-(p[1]-guideStart[1])*guideUnit[0])<=brushTolerance&&(p[0]-guideStart[0])*guideUnit[0]+(p[1]-guideStart[1])*guideUnit[1]>=-brushTolerance&&(p[0]-guideStart[0])*guideUnit[0]+(p[1]-guideStart[1])*guideUnit[1]<=guideChord+brushTolerance)?[guideStart,guideEnd]:source;
-  const segments=[];
-  let unwrapped=null;
+  const segments=[];let unwrapped=null,pathLength=0;
   for(let i=1;i<directionPoints.length;i++){
    const a=directionPoints[i-1],b=directionPoints[i],length=distance(a,b);if(length<=1e-8)continue;
    const raw=Math.atan2(b[1]-a[1],b[0]-a[0]);
-   if(unwrapped===null)unwrapped=raw;
-   else unwrapped+=Math.atan2(Math.sin(raw-unwrapped),Math.cos(raw-unwrapped));
-   segments.push({a,b,length,angle:unwrapped});
+   unwrapped=unwrapped===null?raw:unwrapped+Math.atan2(Math.sin(raw-unwrapped),Math.cos(raw-unwrapped));
+   segments.push({a,b,length,angle:unwrapped,start:pathLength});pathLength+=length;
   }
   if(!segments.length)return null;
-  const total=segments.reduce((n,s)=>n+s.length,0);
-  // The guide alone sets the spatial blending scale. Width and camera stay out.
-  const sigma=Math.max(total*.045,1e-6);
+  const total=pathLength,sigma=Math.max(total*.045,1e-6);
   const nearest=(x,y)=>{let best=Infinity,along=0,segment=-1;for(let i=0;i<segments.length;i++){const s=segments[i],dx=s.b[0]-s.a[0],dy=s.b[1]-s.a[1],t=clamp(((x-s.a[0])*dx+(y-s.a[1])*dy)/(s.length*s.length),0,1),d=Math.hypot(x-s.a[0]-dx*t,y-s.a[1]-dy*t);if(d<best){best=d;along=t*s.length;segment=i;}}return {distance:best,along,segment};};
-  const direction=(x,y,probe)=>{
-   let sum=0,weighted=0;
-   for(let i=0;i<segments.length;i++){
-    const s=segments[i],dx=s.b[0]-s.a[0],dy=s.b[1]-s.a[1],t=clamp(((x-s.a[0])*dx+(y-s.a[1])*dy)/(s.length*s.length),0,1),d=Math.hypot(x-s.a[0]-dx*t,y-s.a[1]-dy*t),weight=s.length*Math.exp(-(d-probe.distance)/sigma);
-    if(weight<1e-15)continue;sum+=weight*s.angle;weighted+=weight;
+  const globalAngle=(x,y,probe)=>{let sum=0,weight=0;for(const s of segments){const dx=s.b[0]-s.a[0],dy=s.b[1]-s.a[1],t=clamp(((x-s.a[0])*dx+(y-s.a[1])*dy)/(s.length*s.length),0,1),d=Math.hypot(x-s.a[0]-dx*t,y-s.a[1]-dy*t),w=s.length*Math.exp(-(d-probe.distance)/sigma);sum+=w*s.angle;weight+=w;}return weight?sum/weight:segments[probe.segment].angle;};
+  // RDP only stabilizes the opposite-turn detection. The retained brush
+  // coordinates still define the local diagonal and its geographic support.
+  const rdp=(list,tolerance=Math.max(total*.008,1e-9))=>{
+   if(list.length<=2)return [list[0],list.at(-1)];
+   const keep=new Set([0,list.length-1]),stack=[[0,list.length-1]];
+   while(stack.length){
+    const [first,last]=stack.pop(),a=list[first],b=list[last],dx=b[0]-a[0],dy=b[1]-a[1],len=dx*dx+dy*dy;
+    let farthest=-1,distanceToChord=0;
+    for(let i=first+1;i<last;i++){const t=len?clamp(((list[i][0]-a[0])*dx+(list[i][1]-a[1])*dy)/len,0,1):0,d=Math.hypot(list[i][0]-a[0]-dx*t,list[i][1]-a[1]-dy*t);if(d>distanceToChord){distanceToChord=d;farthest=i;}}
+    if(distanceToChord>tolerance){keep.add(farthest);stack.push([first,farthest],[farthest,last]);}
    }
-   const angle=weighted?sum/weighted:segments[probe.segment].angle;
+   return [...keep].sort((a,b)=>a-b).map(i=>list[i]);
+  };
+  const turns=points=>{
+   const out=[];
+   for(let i=1;i+1<points.length;i++){const a=points[i-1],b=points[i],c=points[i+1],u=[b[0]-a[0],b[1]-a[1]],v=[c[0]-b[0],c[1]-b[1]];out.push(Math.atan2(u[0]*v[1]-u[1]*v[0],u[0]*v[0]+u[1]*v[1]));}
+   return out;
+  };
+  const simplified=rdp(source),rawTurns=turns(simplified),zBends=[],normalizeAngle=angle=>Math.atan2(Math.sin(angle),Math.cos(angle));
+  for(let first=0;first+1<rawTurns.length;first++){
+   if(!(rawTurns[first]*rawTurns[first+1]<0)||Math.abs(rawTurns[first])<.08||Math.abs(rawTurns[first+1])<.08)continue;
+   for(let last=first+1;last<rawTurns.length;last++){if(rawTurns[first]*rawTurns[last]>=0)continue;const middle=simplified.slice(first+1,last+2),a=middle[0],b=middle.at(-1),dx=b[0]-a[0],dy=b[1]-a[1],length=Math.hypot(dx,dy);if(length<sigma*.5)break;const tail=simplified[last+2]??b,follow=tail,direction=Math.atan2(dy,dx),entry=Math.atan2(simplified[first+1][1]-simplified[first][1],simplified[first+1][0]-simplified[first][0]),exit=Math.atan2(follow[1]-b[1],follow[0]-b[0]);zBends.push({start:simplified[first+1],end:b,angle:direction,length,halfWidth:length*.5,entry:normalizeAngle(entry-direction),exit:normalizeAngle(exit-direction)});break;}
+  }
+  const direction=(x,y,probe)=>{
+   const baseline=globalAngle(x,y,probe);
+   let angle=baseline;
+   for(const fold of zBends){
+    const dx=fold.end[0]-fold.start[0],dy=fold.end[1]-fold.start[1],base=[x-fold.start[0],y-fold.start[1]],along=(base[0]*dx+base[1]*dy)/fold.length,lateral=(base[0]*dy-base[1]*dx)/fold.length;
+    const ramp=fold.length*.31;
+    let desired=along<0?fold.entry:along>fold.length?fold.exit:0;
+    if(along>=0&&along<=ramp)desired=fold.entry*(1-clamp(along/ramp,0,1));
+    else if(along>=fold.length-ramp&&along<=fold.length)desired=fold.exit*clamp((along-fold.length+ramp)/ramp,0,1);
+    const axialOutside=Math.max(0,-along,along-fold.length),lateralWeight=Math.exp(-Math.pow(lateral/(fold.halfWidth*.72),2)),axialWeight=clamp(1-axialOutside/(fold.length*.18),0,1),blend=lateralWeight*Math.pow(axialWeight,2)*(3-2*axialWeight);
+    if(blend>1e-8){const target=fold.angle+desired,delta=Math.atan2(Math.sin(baseline-target),Math.cos(baseline-target));angle=target+delta*(1-blend);}
+   }
    return {heading:[Math.cos(angle),Math.sin(angle)]};
   };
   function sampleWind(x,y,halfWidth=width/2){

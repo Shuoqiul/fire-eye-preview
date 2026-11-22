@@ -310,3 +310,36 @@ test('crossing sharp legs use one radius-independent heading and turn consistent
   }
  }
 });
+test('real 48-point Z preserves its opposing central turn through entry and exit',()=>{
+ const coarse=[[100,100],[500,100],[420,180],[800,180]],brush=g.sample(coarse,48);
+ const heading=(field,point)=>{const result=field.sample(...point);assert.ok(result,`Z sample ${point}`);return Math.atan2(result.heading[1],result.heading[0]);};
+ const difference=(a,b)=>Math.abs(Math.atan2(Math.sin(a-b),Math.cos(a-b)));
+ const sides=[{entry:[300,100],middle:[460,140],exit:[600,180]},{entry:[300,100],middle:[460,140],exit:[800,180]}];
+ for(const width of [60,180,300])for(const side of sides){
+  const field=g.createWorldWindField(brush,width,45);
+  assert.ok(difference(heading(field,side.entry),0)<Math.PI/12,`Z first leg ${side.entry}`);
+  const middle=heading(field,side.middle);
+  assert.ok(difference(middle,Math.PI*.75)<Math.PI/18,`Z reversed middle ${side.middle}: ${(middle*180/Math.PI).toFixed(2)}°`);
+  assert.ok(difference(heading(field,side.exit),0)<Math.PI/12,`Z outgoing leg ${side.exit}`);
+ }
+ for(const span of [50,80,140]){
+  const guide=[[100,100],[500,100],[500-span/Math.SQRT2,100+span/Math.SQRT2],[800,180]],middle=[500-span/(2*Math.SQRT2),100+span/(2*Math.SQRT2)];
+  for(const points of [guide,g.sample(guide,48)]){
+   const field=g.createWorldWindField(points,180,45);
+   const value=heading(field,middle);
+   assert.ok(difference(value,Math.PI*.75)<Math.PI/12,`${span}-unit middle with ${points.length} points: ${(value*180/Math.PI).toFixed(2)}°`);
+  }
+ }
+ const mirrored=g.createWorldWindField(brush.map(([x,y])=>[-x,y]),180,45),base=g.createWorldWindField(brush,180,45);
+ for(const point of [[100,100],[460,140],[800,180]]){
+  const original=base.sample(...point),mirror=mirrored.sample(-point[0],point[1]);
+  assert.ok(original&&mirror&&Math.abs(original.heading[0]+mirror.heading[0])<1e-10&&Math.abs(original.heading[1]-mirror.heading[1])<1e-10,'Z mirror keeps local headings');
+ }
+ const camera=g.createWorldWindField(brush.map(([x,y])=>[x*40,y*40]),7200,45);
+ for(const point of [[300,100],[460,140],[600,180]])assert.ok(Math.abs(heading(base,point)-heading(camera,point.map(v=>v*40)))<1e-10,'Z heading stays geographic after camera scaling');
+ const screenBrush=g.sample([[760,310],[1230,310],[960,520],[1360,520]],48),screen=g.createWorldWindField(screenBrush,180,45);
+ assert.ok(difference(heading(screen,[1220,520]),0)<Math.PI/4,`screen Z outgoing ${heading(screen,[1220,520])}`);
+ for(const [point,want] of [[[1000,310],0],[[1100,400],Math.PI*.75]]){
+  assert.ok(difference(heading(screen,point),want)<Math.PI/4,`screen Z core ${point}`);
+ }
+});
