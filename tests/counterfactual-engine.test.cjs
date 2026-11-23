@@ -174,3 +174,38 @@ test('postcoast strength uses one coherent R34-scale radius with no flat convect
  assert.ok(coast>0&&coast<1000);
  assert.equal(model.footprint(weak,.5,[-96.025,38.025]),model.footprint(weak,.5,[-96.025,38.025]));
 });
+test('wholly weak cyclone tracks retain exact published scores with a bounded local wind diagnostic',()=>{
+ const input=make([12],[.2,.4,.6,.8]);
+ const weak={...model.defaults('hurricane',[-96,30]),track:Array.from({length:2},()=>[-96,30,20]),rainIn:0,startH:0,durationH:12};
+ const near=model.run({...input,event:{...weak,center:[-96,30]}});
+ for(const [wi,w] of near.windows.entries())for(let i=0;i<4;i++){
+  assert.equal(w.scenario[i],w.baseline[i]);
+  assert.equal(near.score.scenario[wi][i],input.windows[wi].values[i]);
+  assert.equal(near.score.delta[wi][i],0);
+ }
+ const elsewhere=model.run({...input,event:{...weak,center:[-120,38]}});
+ assert.equal(elsewhere.footprint.cells,0);
+ assert.match(model.metadata.weakStorm,/bounded diagnostic/);
+});
+test('tapered cyclone rain remains separate from conservative published-score support',()=>{
+ const grid={width:1,height:1,transform:[5000,0,-8000000,0,-5000,3235000]};
+ const window={leadHours:12,targetTime:new Date(Date.UTC(2026,10,27,12)).toISOString(),values:new Float32Array([.22])};
+ const project=(x,y)=>[x/100000,y/100000];
+ const base={...model.defaults('hurricane',[-80,29]),center:[-80,29],rainIn:1,track:[[-80,29,80],[-80,29,80]],startH:0,durationH:12};
+ const inputFor=lat=>({grid:{...grid,transform:[5000,0,-8002500,0,-5000,lat*100000+2500]},windows:[window],project});
+ const core=model.run({...inputFor(29),event:base}),outer=model.run({...inputFor(32.2),event:base});
+ assert.ok(core.windows[0].delta[0]<0);
+ assert.ok(core.score.delta[0][0]<0);
+ assert.ok(outer.windows[0].delta[0]<0);
+ assert.equal(outer.score.scenario[0][0],window.values[0]);
+ assert.equal(outer.score.delta[0][0],0);
+});
+test('cyclone rain has explicit domain endpoints and Tuleya-aligned score ramp',()=>{
+ assert.equal(model.hurricaneSupportRadius(80),500);
+ assert.equal(model.hurricaneSupportRadius(34),0);
+ assert.deepEqual({...model.scoreRain},{startMm:2.54,fullMm:6.35,windowHours:24});
+ assert.match(model.metadata.hurricaneScore,/not a validated fire threshold/);
+ const input=make([12],[.4,.4,.4,.4]);
+ const storm={...model.defaults('hurricane',[-96,38]),track:[[-96,38,80],[-96,38,80]],rainIn:1,startH:0,durationH:12};
+ assert.ok(model.run({...input,event:storm}).score.scenario[0][0]<input.windows[0].values[0]);
+});

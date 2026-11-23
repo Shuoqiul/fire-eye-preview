@@ -48,8 +48,10 @@ try {
   const outside=FireCounterfactual.areaAt(fireEyeCounterfactual.event.area,[-130,38]);
   return {width:canvas.width,height:canvas.height,min:Math.min(...levels),max:Math.max(...levels),levels:levels.size,visibility:map.getLayoutProperty('cf-result-raster','visibility'),outside,outsideView:document.querySelector('#cf-results').textContent.includes('Feathering is visual only')};
  },image);
- assert.ok(imageData.length>0);assert.equal(surface.visibility,'visible');assert.ok(surface.min===0&&surface.max>180&&surface.levels>12,JSON.stringify(surface));
+ assert.ok(imageData.length>0);assert.equal(surface.visibility,'visible');assert.ok(surface.min===0&&surface.max>40&&surface.max<180&&surface.levels>12,JSON.stringify(surface));
  assert.equal(surface.outside,0);assert.equal(surface.outsideView,true,'compare legend separates feathering from exact native differences');
+ const compareLegend=await page.locator('.cf-legend').evaluate(el=>({text:el.textContent,ticks:[...el.querySelectorAll('.cf-legend-ticks span')].map(n=>n.textContent),bar:getComputedStyle(el.querySelector('.cf-legend-bar')).backgroundImage}));
+ assert.match(compareLegend.text,/fixed scale/i);assert.deepEqual(compareLegend.ticks,['-0.1000','0.0000','+0.1000']);assert.match(compareLegend.bar,/249, 220, 220/);
  await page.getByRole('button',{name:'Scenario',exact:true}).click();
  const scenarioLegend=await page.locator('.cf-legend-bar').evaluate(el=>({styles:[...getComputedStyle(el).backgroundImage.matchAll(/\b\d{1,3},\s*\d{1,3},\s*\d{1,3}\b/g)].map(m=>m[0].replace(/\s+/g,'')),outside:el.parentElement.textContent.includes('Outside the event footprint: exact published values'),riskVisible:fireEyePreview.riskVisible}));assert.deepEqual(scenarioLegend.styles,['37,87,43','47,113,54','111,150,65','183,187,62','224,180,51','221,112,45','169,47,43']);assert.equal(scenarioLegend.outside,true);assert.equal(scenarioLegend.riskVisible,true);
  await page.screenshot({path:'/tmp/cf-scenario-feathered.png'});

@@ -28,7 +28,7 @@
     formula:'d=clamp(kappa*log((1+ISIA)/(1+ISIB)),-1,1); q=s*exp(d)/(1-s+s*exp(d))',
     baselineGate:'Contemporaneous PUBLISHED occupancy score; it is an illustrative receptivity gate, not measured fuel dryness.',
     rain:'An outcome percent change is unavailable; the native FFMC/ISI moisture response remains a separate diagnostic.',
-    weakStorm:'Below the 34 kt R34 validity floor, a tapered radial core uses the 34 kt radius shape at reduced wind and footprint intensity.',
+    weakStorm:'Below 34 kt, a bounded local wind diagnostic uses the R34 core shape at Vmax/34; mapped score retains the published occupancy value.',
     lightning:'The lightning score overlay uses an illustrative odds adjustment. Conditional discovery remains a separate diagnostic.',
     uncertainty:'The bridge is illustrative and requires a model-derived paired rerun for causal coefficients.'
   });
@@ -38,8 +38,9 @@
     endpoint:'Initial spread index (ISI)',unit:'ISI',version:'20261117-research',
     evidence:'Published hourly FFMC/ISI mechanisms; source-specific storm fields; conditional discovery fit.',
     rain:'Hourly positive-rain wetting followed by temperature/RH/wind-driven state recovery.',
-    hurricaneFields:'North Atlantic R34/R64 geometry for wind-driven ISI exposure; R-CLIPER conditional rain is a separate native diagnostic at 35–150 kt.',
-    weakStorm:'Weak (<34 kt) circulation uses a positive tapered radial core with the 34 kt radius shape multiplied by Vmax/34; zero wind has zero support.',
+    hurricaneFields:'North Atlantic Knaff R34/R64 local wind for wind-driven ISI; R-CLIPER Table 2 rain has a separately tapered 500 km app-domain edge and 35–150 kt support.',
+    weakStorm:'Below 34 kt, local wind remains a bounded diagnostic with the R34 core shape scaled by Vmax/34; mapped published score stays exact.',
+    hurricaneScore:'Wind ISI uses the Knaff local wind to .85 R34. Illustrative rain ISI enters only after 2.54 mm of rolling 24 h added rain and reaches full contribution at 6.35 mm; this app choice borrows Tuleya verification levels and is not a validated fire threshold.',
     lightning:'Discovery timing is conditional on an already matched reported fire. Exposure-conditioned ignition requires the corresponding model.',
     burn:'Treatment response uses supplied paired fuel-process outcomes. Treatment type and recovery rules are required.',
     outputs:'Published mapped scores and their illustrative bounded score bridge; native FFMC/ISI diagnostics retain their own units.',
@@ -76,6 +77,7 @@
     );
   }
   function smoothstep(a, b, x) {
+    if (a === b) return x <= a ? 0 : 1;
     const t = clamp((x - a) / (b - a), 0, 1);
     return t * t * (3 - 2 * t);
   }
@@ -495,7 +497,7 @@
     if (e.type === 'hurricane') {
       const strength = Math.max(...e.track.map(p => p[2]));
       for (const p of e.track) for (const theta of [45, 135, 225, 315]) {
-        margin = Math.max(margin, 1.5 * tcRadius(strength, clamp(p[1], -75, 75), 34, theta), e.rainIn>0?hurricaneSupportRadius(strength):0);
+        margin = Math.max(margin, tcRadius(strength, clamp(p[1], -75, 75), 34, theta), e.rainIn>0?hurricaneSupportRadius(strength):0);
       }
       margin += 50;
     }
@@ -563,9 +565,8 @@
     return all;
   }
   function stormFootprint(e, wins, point, lower=Math.max(0,e.startH), upper=Math.min(Math.max(...wins.map(w=>w.leadHours)),e.startH+e.durationH)) {
-    // A local wind cell is inside at least one active R34 sector, or receives
-    // conditional R-CLIPER rainfall. Neighbouring cells are active only when
-    // their own path centre provides positive local wind or rain.
+    // A local wind cell is inside an active bounded R34 sector, or receives
+    // conditional R-CLIPER rain inside the app's finite support.
     for (let t = lower + .1 / 2; t < upper; t += .1) {
       const c = trackCenter(e, t);
       if (c.offTrack) continue;
@@ -582,22 +583,30 @@
     const theta=(motion.bearing+90-bearing+360)%360;
     const windKt=localHurricaneWind(e,leadHours,point);
     let rainMmH=0,rainTaper=0;
-    if(e.rainIn>0&&c.vmax>=35&&c.vmax<=150){
-      const p=science.rcliperParameters(c.vmax);
-      const support=p.reKm*Math.log(p.tmInDay/.05);
+    const profile=e.rainIn>0?hurricaneRainProfile(c.vmax):null;
+    if(profile){
       const r=Math.hypot(dx,dy);
-      if(r<=support){
+      if(r<=profile.supportKm){
         rainMmH=science.rcliperRainRate(c.vmax,r);
-        rainTaper=r>p.rmKm?Math.max(0,Math.min(1,(support-r)/(support-p.rmKm))):1;
+        rainTaper=r>profile.coreKm?smoothstep(profile.supportKm,profile.coreKm,r):1;
       }
     }
     return {windKt,rainMmH:rainMmH*rainTaper};
   }
-  function hurricaneSupportRadius(vmax) {
-    if(!(vmax>=35&&vmax<=150))return 0;
+  function hurricaneRainProfile(vmax){
+    if(!(vmax>=35&&vmax<=150))return null;
     const p=science.rcliperParameters(vmax);
-    return Math.max(p.reKm*Math.log(p.tmInDay/.05),p.rmKm);
+    // Tuleya et al. (2007) fit the radial profile within 500 km. R-CLIPER's
+    // Table 2 exponential stays positive, so this cutoff belongs to this app.
+    const supportKm=500;
+    const coreKm=Math.min(p.rmKm,.5*supportKm);
+    return {supportKm,coreKm};
   }
+  function hurricaneSupportRadius(vmax) {
+    const profile=hurricaneRainProfile(vmax);
+    return profile?profile.supportKm:0;
+  }
+  const SCORE_RAIN={startMm:2.54,fullMm:6.35,windowHours:24};
   function affineCenter(grid, x, y) {
     // GDAL affine order: a,b,c,d,e,f => x' = ax + by + c, y' = dx + ey + f.
     // x,y are native pixel indices. Cell centres are x + 0.5, y + 0.5.
@@ -635,6 +644,7 @@
     if(e&&!burn)for(const cell of selected) {
       const first=weatherAt(cell.i,0);if(!first)continue;
       let baseFFMC=first.initialFFMC??85,scenarioFFMC=baseFFMC,totalRain=0;
+      let windFFMC=baseFFMC,addedRain=[],lastAddedRain=0;
       const zeroDriver=cell.diagnostic===true||e.type==='high_wind'&&e.windMph===0;
       const target=e.type==='high_wind'?windTarget(e,cell.p):null;
       for(let h=1;h<=maxLead;h++) {
@@ -644,7 +654,7 @@
         const backgroundRain=weather.rainMm??0;if(!finite(backgroundRain)||backgroundRain<0)throw Error('Hourly background rain must be nonnegative mm.');
         const active=Math.max(0,Math.min(h,e.startH+e.durationH)-Math.max(h-1,e.startH));
         const weight=footprintAt(e,h-.5,cell.p),blend=clamp(weight*active,0,1);
-        let u=uMs,v=vMs,rain=backgroundRain;
+        let u=uMs,v=vMs,rain=backgroundRain,rainAdded=0;
         if(e.type==='high_wind'&&!zeroDriver){
           const speed=e.windMph*.44704;[u,v]=science.blendWindVectors(uMs,vMs,speed*target[0],speed*target[1],blend);
         }else if(e.type==='hurricane'&&active>0){
@@ -655,13 +665,17 @@
             const field=stormField(e,center,cell.p,h-.5);
             const speed=field.windKt*KNOT_TO_MPS;
             [u,v]=science.blendWindVectors(uMs,vMs,speed*tx,speed*ty,blend);
-            if(e.rainIn>0)rain+=field.rainMmH*active;
+            if(e.rainIn>0){rainAdded=field.rainMmH*active;rain+=rainAdded;}
             if(center.vmax<35||center.vmax>150)rainDomainHours++;
           }
         }
         if((e.type==='heavy_rain'||e.type==='thunderstorm')&&active>0)rain+=e.rainIn*25.4*weight*active/e.durationH;
         baseFFMC=science.hourlyFFMC(baseFFMC,tempC,rhPct,Math.hypot(uMs,vMs)*3.6,backgroundRain,1);
         scenarioFFMC=science.hourlyFFMC(scenarioFFMC,tempC,rhPct,Math.hypot(u,v)*3.6,rain,1);
+        if(e.type==='hurricane'){
+          windFFMC=science.hourlyFFMC(windFFMC,tempC,rhPct,Math.hypot(u,v)*3.6,backgroundRain,1);
+          addedRain.push(rainAdded);lastAddedRain=rainAdded;
+        }
         totalRain+=rain;
         const index=wins.findIndex(win=>win.leadHours===h);if(index<0)continue;
         if(zeroDriver&&scoreBridge){
@@ -674,7 +688,7 @@
         }
         if(e.type==='hurricane'){
           const storm=trackCenter(e,h-.5);
-          const scoreStorm=trackCenter(e,h-.5),field=stormField(e,scoreStorm,cell.p,h-.5);
+          const scoreStorm=storm,field=stormField(e,scoreStorm,cell.p,h-.5);
           const noWind=scoreStorm.offTrack||scoreStorm.vmax<34||field.windKt===0;
           const noRain=field.rainMmH===0;
           if(noWind&&noRain)continue;
@@ -683,7 +697,14 @@
         out[index].baseline[cell.i]=b;out[index].scenario[cell.i]=a;out[index].delta[cell.i]=a-b;
         if(scoreBridge){
           const publishedValue=wins[index].values[cell.i];
-          const r=finite(publishedValue)?scoreAdapter(publishedValue,b,a):Object.freeze({baseline:NaN,scenario:NaN,delta:NaN,response:0,label:SCORE_ADAPTER.name});
+          let scoreISI=a;
+          if(e.type==='hurricane'){
+            const windOnly=science.initialSpreadIndex(windFFMC,Math.hypot(u,v)*3.6,false);
+            const rain24=addedRain.slice(-SCORE_RAIN.windowHours).reduce((sum,v)=>sum+v,0);
+            const rainShare=lastAddedRain>0?smoothstep(SCORE_RAIN.startMm,SCORE_RAIN.fullMm,rain24):0;
+            scoreISI=windOnly+rainShare*(a-windOnly);
+          }
+          const r=finite(publishedValue)?scoreAdapter(publishedValue,b,scoreISI):Object.freeze({baseline:NaN,scenario:NaN,delta:NaN,response:0,label:SCORE_ADAPTER.name});
           published[index][cell.i]=r.baseline;scenario[index][cell.i]=r.scenario;
           // Delta is defined by the Float32 pair stored for display and readout.
           delta[index][cell.i]=scenario[index][cell.i]-published[index][cell.i];
@@ -703,6 +724,10 @@
         const exposure=(cell.footprint??0)*e.coverage*(activeHours(e,w.leadHours)/12);
         const shift=LIGHTNING_DEMO.maximumLogOdds*exposure*Math.exp(-e.rainIn/LIGHTNING_DEMO.rainScaleIn);
         scenario[wi][cell.i]=shiftOdds(scenario[wi][cell.i],shift);
+      }else if(e.type==='hurricane'){
+        const storm=trackCenter(e,w.leadHours-.5);
+        const field=stormField(e,storm,cell.p,w.leadHours-.5);
+        if(storm.offTrack||storm.vmax<34||field.windKt===0&&field.rainMmH===0)scenario[wi][cell.i]=source;
       }
       delta[wi][cell.i]=scenario[wi][cell.i]-source;
     }
@@ -793,6 +818,8 @@
     affineCenter,
     areaAt,
     activeCellIndices,
+    hurricaneSupportRadius,
+    scoreRain:SCORE_RAIN,
     metadata: METADATA,
     parameters: P
   };

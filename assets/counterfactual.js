@@ -6,6 +6,7 @@
   const presets=FirePresets.groups;
   const rgb=c=>'rgb('+(Array.isArray(c)?c:[parseInt(c.slice(1,3),16),parseInt(c.slice(3,5),16),parseInt(c.slice(5,7),16)]).map(Math.round).join(', ')+')';
   const OCCUPANCY_RAMP=[[0,[37,87,43]],[.03,[37,87,43]],[.05,[47,113,54]],[.08,[111,150,65]],[.15,[183,187,62]],[.25,[224,180,51]],[.4,[221,112,45]],[.6,[169,47,43]],[1,[169,47,43]]];
+  const compareDisplay=window.FireCompareDisplay;
   const state={open:false,event:null,result:null,view:'scenario',mode:'everyone',windowIndex:0,status:'idle'};
   let panel,output,status,token=0,grid,features=[],geoKey='',saved,drag=null,drawing=null,suppressClick=false,brush=null,animation=0,icons=[],windArrows=[],windFieldCache=null,stormSymbols=[],coast=null,coastReady=null,motionTextures=[],motionStart=0,motionCanvas=null,motionPixels=null,motionContext=null,windGeometryKey='',windGeometryTime=0;
   const S=()=>window.fireEyePreview;
@@ -285,23 +286,22 @@
       ['interpolate',['linear'],['get','scenario'],0,.10,.03,.14,.05,.23,.08,.35,.15,.49,.25,.62,.4,.72,1,.82]]:0);
     if(map.getLayer('cf-result-raster'))map.setLayoutProperty('cf-result-raster','visibility',r&&state.view==='change'?'visible':'none');
   }
-  function resultTexture(cells,r){
+  function resultTexture(cells){
     const visible=cells.filter(f=>f.properties.delta!==0);
+    if(!visible.length)return null;
     const polygons=visible.map(f=>f.geometry.coordinates[0].map(p=>maplibregl.MercatorCoordinate.fromLngLat(p)));
-    if(!polygons.length)return null;
     let minX=Infinity,minY=Infinity,maxX=-Infinity,maxY=-Infinity;
     for(const ring of polygons)for(const p of ring){minX=Math.min(minX,p.x);minY=Math.min(minY,p.y);maxX=Math.max(maxX,p.x);maxY=Math.max(maxY,p.y);}
     const first=polygons[0],unit=Math.max(Math.hypot(first[1].x-first[0].x,first[1].y-first[0].y),Math.hypot(first[3].x-first[0].x,first[3].y-first[0].y));
     if(!(unit>0))return null;
-    const scale=Math.min(5/unit,1000/Math.max(maxX-minX,maxY-minY)),sigma=Math.max(1.2,scale*unit*.8),pad=Math.ceil(sigma*4);
+    const scale=Math.min(5/unit,1400/Math.max(maxX-minX,maxY-minY)),sigma=Math.max(1.2,scale*unit*.8),pad=Math.ceil(sigma*5);
     const source=document.createElement('canvas');source.width=Math.ceil((maxX-minX)*scale)+2*pad;source.height=Math.ceil((maxY-minY)*scale)+2*pad;
     const ctx=source.getContext('2d');
     for(let i=0;i<visible.length;i++){
-      const val=visible[i].properties.delta/(r.scoreSpan||1);
-      ctx.globalAlpha=Math.min(.96,.20+.76*Math.sqrt(Math.abs(val)));
-      ctx.strokeStyle=ctx.fillStyle=val<0?'#246aa5':'#a82637';ctx.lineWidth=.8;ctx.beginPath();
-      polygons[i].forEach((p,j)=>ctx[j?'lineTo':'moveTo']((p.x-minX)*scale+pad,(p.y-minY)*scale+pad));
-      ctx.closePath();ctx.fill();ctx.stroke();
+      const delta=visible[i].properties.delta;
+      ctx.globalAlpha=compareDisplay.alpha(delta);
+      ctx.fillStyle=rgb(compareDisplay.colour(delta));
+      ctx.beginPath();polygons[i].forEach((p,j)=>ctx[j?'lineTo':'moveTo']((p.x-minX)*scale+pad,(p.y-minY)*scale+pad));ctx.closePath();ctx.fill();
     }
     const canvas=document.createElement('canvas');canvas.width=source.width;canvas.height=source.height;
     const out=canvas.getContext('2d');out.filter='blur('+sigma+'px)';out.drawImage(source,0,0);
@@ -311,7 +311,7 @@
   function paintResultTexture(map){
     const show=features.length&&state.view==='change';
     if(!show){if(map.getLayer('cf-result-raster'))map.removeLayer('cf-result-raster');if(map.getSource('cf-result-image'))map.removeSource('cf-result-image');return;}
-    const raster=resultTexture(features,state.result);
+    const raster=resultTexture(features);
     if(!raster){if(map.getLayer('cf-result-raster'))map.removeLayer('cf-result-raster');if(map.getSource('cf-result-image'))map.removeSource('cf-result-image');return;}
     const source=map.getSource('cf-result-image');
     if(source)source.updateImage(raster);
@@ -333,15 +333,24 @@
     output.append(bar);
   }
   function appendLegend(){
-    const legend=node('div','','cf-legend'),colours=state.view==='change'?[[36,106,165],[133,169,201],[247,247,241],[221,132,123],[168,38,55]]:[[37,87,43],[47,113,54],[111,150,65],[183,187,62],[224,180,51],[221,112,45],[169,47,43]],bar=node('div','','cf-legend-bar '+(state.view==='change'?'change':'seq'));
-    legend.append(node('p',state.view==='change'?'Scenario score change · blue lower / red higher':(state.view==='baseline'?'Released baseline':'Scenario · native 5 km cells')+' · published occupancy scale'));
-    bar.style.background='linear-gradient(90deg,'+colours.map(rgb).join(',')+')';legend.append(bar);
-    const ticks=node('div','','cf-legend-ticks'),changeView=state.view==='change';for(const v of changeView?[-state.result.scoreSpan,0,state.result.scoreSpan]:[0,.25,.6,1])ticks.append(node('span',v.toFixed(changeView?4:2)));legend.append(ticks);
-    const outside=node('p',changeView?'Feathering is visual only; native change is zero outside the event footprint.':'Outside the event footprint: exact published values and colours','cf-legend-note');outside.id='cf-outside-note';outside.style.fontSize='9px';outside.style.color='#576c5f';outside.style.marginTop='4px';legend.append(outside);output.append(legend);
+    const change=state.view==='change',legend=node('div','','cf-legend'),bar=node('div','','cf-legend-bar '+(change?'change':'seq'));
+    legend.append(node('p',change?'Score change · fixed scale · blue lower / red higher':(state.view==='baseline'?'Released baseline':'Scenario · native 5 km cells')+' · published occupancy scale'));
+    if(change){const background=[];
+      for(const [value,color] of compareDisplay.COLORS)background.push(`${rgb(color)} ${(value/compareDisplay.SCALE.extent+1)*50}%`);
+      bar.style.background=`linear-gradient(90deg,${background.join(',')})`;
+    }else bar.style.background='linear-gradient(90deg,'+OCCUPANCY_RAMP.map(([,c])=>rgb(c)).filter((color,index,all)=>index===0||color!==all[index-1]).join(',')+')';
+    legend.append(bar);
+    const ticks=node('div','','cf-legend-ticks');
+    const tickValues=change?[-.1,0,.1]:[0,.25,.6,1];
+    for(const v of tickValues)ticks.append(node('span',change?(v>0?'+':'')+v.toFixed(4):v.toFixed(2)));
+    if(change){ticks.style.display='grid';ticks.style.gridTemplateColumns='1fr 1fr 1fr';ticks.textAlign='center';}
+    legend.append(ticks);
+    const outside=node('p',change?'Feathering is visual only; exact signed score delta uses a fixed ±0.10 scale.':'Outside the event footprint: exact published values and colours','cf-legend-note');outside.id='cf-outside-note';outside.style.fontSize='9px';outside.style.color='#576c5f';outside.style.marginTop='4px';legend.append(outside);output.append(legend);
   }
   function drawResult(){if(!state.result||!state.open)return;const w=state.result.windows[state.windowIndex],key=w.leadHours+':'+state.view;if(key!==geoKey){features=[];const project=proj4(grid.proj4,'EPSG:4326'),t=grid.transform;
       for(const i of state.result.footprint.indices){const b=state.result.score.published[state.windowIndex][i],s=state.result.score.scenario[state.windowIndex][i],d=state.result.score.delta[state.windowIndex][i];if(!Number.isFinite(b)||!Number.isFinite(s)||(d===0&&state.view==='scenario'))continue;const row=Math.floor(i/grid.width),col=i%grid.width;const ring=[[col,row],[col+1,row],[col+1,row+1],[col,row+1],[col,row]].map(([x,y])=>project.forward([t[0]*x+t[1]*y+t[2],t[3]*x+t[4]*y+t[5]]));features.push(feature({type:'Polygon',coordinates:[ring]},'cell',{baseline:b,scenario:s,delta:d,publishedReference:w.publishedBaseline[i],nativeBaseline:w.baseline[i],nativeScenario:w.scenario[i],reference:state.view==='change'?d:state.view==='baseline'?b:s}));}
-      geoKey=key;S().map.getSource('cf-result').setData(fc(features));}paintResultTexture(S().map);paint();}
+      geoKey=key;S().map.getSource('cf-result').setData(fc(features));}
+    paintResultTexture(S().map);paint();}
   function renderResult(){if(!state.result)return;output.hidden=false;output.replaceChildren(node('h3','3 · Compare scenario score'));if(!state.result.available){const notice=node('p',state.result.reason,'cf-result-note');notice.id='cf-unavailable-reason';output.append(notice);}
     appendResultViews();if(state.view==='published'){const w=state.result.windows[state.windowIndex],reference=node('section','','cf-retained-reference');const label=node('p','RETAINED PUBLISHED REFERENCE','cf-retained-label');label.style.cssText='font-size:9px;font-weight:650;letter-spacing:.04em;color:#4d6d5c;margin:6px 0 0';reference.append(label,node('p',`Retained published fire-activity score · ${date(w.targetTime)} · selected-area mean ${score(w.summary.publishedReference)}`,'cf-result-note'),node('p','The published reference is displayed directly; event calculations retain it unchanged.','cf-hint'));output.append(reference,releasedChart());paint();return;}
     appendLegend();
@@ -359,6 +368,7 @@
         output.append(formula);
       }else{
         output.append(node('p',`Native ISI: ${score(s.baseline)} → ${score(s.scenario)}. Mapped changes use an illustrative score response on the published forecast.`,'cf-result-note'));
+        if(state.event.type==='hurricane'&&state.event.rainIn>0)output.append(node('p','Rainfall enters the illustrative score progressively at about 2.5–6.4 mm of added rain over the prior 24 h. Native ISI uses the separate cyclone rain profile. This is a demo mapping, not a calibrated impact threshold.','cf-result-note'));
         if(state.event.type==='thunderstorm')output.append(node('p','Lightning contributes a small illustrative increase in score odds, scaled by local coverage and damped by rainfall. Added rain also changes fuel moisture and ISI. Ignition calibration requires matched lightning exposures with and without fires.','cf-result-note'));
       }
       if(state.view==='change'&&state.result.scoreSpan===0)output.append(node('p','Zero score change · the map retains the released colors.','cf-result-note'));
